@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # Test script that runs tests and updates README badges
-# 测试脚本，运行测试并更新README徽章
 
 echo "🧪 Running tests and updating badges..."
 
