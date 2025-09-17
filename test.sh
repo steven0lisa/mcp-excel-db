@@ -62,8 +62,8 @@ else
 fi
 
 # Update README.md badges
-sed -i.bak "s|!\[Tests\].*|\[![Tests](https://img.shields.io/badge/tests-$TEST_STATUS-$TEST_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
-sed -i.bak "s|!\[Coverage\].*|\[![Coverage](https://img.shields.io/badge/coverage-$COVERAGE-$COVERAGE_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
+sed -i.bak "s|.*!\[Tests\].*|[![Tests](https://img.shields.io/badge/tests-$TEST_STATUS-$TEST_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
+sed -i.bak "s|.*!\[Coverage\].*|[![Coverage](https://img.shields.io/badge/coverage-$COVERAGE-$COVERAGE_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
 
 # Remove backup file
 rm -f README.md.bak
