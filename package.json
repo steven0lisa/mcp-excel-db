@@ -1,0 +1,60 @@
+{
+  "name": "@zhangzichao2008/mcp-excel-db",
+  "version": "1.0.0",
+  "description": "MCP Server for querying Excel files using SQL syntax",
+  "type": "module",
+  "main": "dist/mcp-server.js",
+  "bin": {
+    "mcp-excel-db": "dist/mcp-server.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/mcp-server.js",
+    "dev": "ts-node src/mcp-server.ts",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "mcp",
+    "excel",
+    "sql",
+    "database",
+    "query",
+    "server",
+    "model-context-protocol"
+  ],
+  "author": "steven0lisa <steven0lisa@live.com>",
+  "license": "Apache License 2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/steven0lisa/mcp-excel-db.git"
+  },
+  "homepage": "https://github.com/steven0lisa/mcp-excel-db#readme",
+  "bugs": {
+    "url": "https://github.com/steven0lisa/mcp-excel-db/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.6.0",
+    "exceljs": "^4.4.0",
+    "node-sql-parser": "^5.3.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@types/jest": "^29.5.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "~5.8.3",
+    "ts-node": "^10.9.2"
+  }
+}
