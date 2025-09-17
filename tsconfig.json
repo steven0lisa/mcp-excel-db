@@ -5,7 +5,7 @@
     "moduleResolution": "node",
     "lib": ["ES2020", "DOM"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -20,6 +20,6 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "test"]
+  "include": ["src/**/*", "test/test-new-features.ts"],
+  "exclude": ["node_modules", "dist", "test/mcp-server.test.ts", "test/test-excel-sql.ts"]
 }

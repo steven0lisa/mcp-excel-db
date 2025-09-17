@@ -5,10 +5,15 @@
   Make your excel as a database to query with SQL.
   <br>
   <a href="doc/zh-cn/README.md">[<strong>中文</strong>]</a> 
+  <br>
+  
 </p>
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[[[[![Tests](https://img.shields.io/badge/tests-4%20passed-brightgreen.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[[[[![Coverage](https://img.shields.io/badge/coverage-24.47%-red.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)
+
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
 
@@ -73,11 +78,34 @@ npx @zhangzichao2008/mcp-excel-db@latest
 
 The MCP server provides the following tools:
 
-#### 1. `load_excel_file`
-Load an Excel file for querying.
+#### 1. `execute_sql_query`
+Execute SQL queries on Excel files. Each query requires specifying the file path.
+
+**Parameters:**
+- `sql` (string): SQL SELECT statement
+- `filePath` (string): Path to the Excel file (.xlsx or .xls)
+
+**Example:**
+```json
+{
+  "sql": "SELECT * FROM Sheet1 WHERE age > 25 ORDER BY name",
+  "filePath": "/path/to/your/spreadsheet.xlsx"
+}
+```
+
+**Special SQL Commands:**
+- Use `DESCRIBE tablename` to get column information for a worksheet
+- Example: `DESCRIBE Sheet1` returns column names and data types
+
+#### 2. `get_worksheet_info`
+Get information about all worksheets in an Excel file.
 
 **Parameters:**
 - `filePath` (string): Path to the Excel file (.xlsx or .xls)
+
+**Returns:**
+- Worksheet names
+- Row counts for each worksheet
 
 **Example:**
 ```json
@@ -86,32 +114,11 @@ Load an Excel file for querying.
 }
 ```
 
-#### 2. `execute_sql_query`
-Execute SQL queries on the loaded Excel file.
-
-**Parameters:**
-- `sql` (string): SQL SELECT statement
-
-**Example:**
-```json
-{
-  "sql": "SELECT * FROM Sheet1 WHERE age > 25 ORDER BY name"
-}
-```
-
-#### 3. `get_worksheet_info`
-Get information about all worksheets in the loaded Excel file.
-
-**Returns:**
-- Worksheet names
-- Row counts
-- Column information
-
-#### 4. `get_worksheet_columns`
-Get column names for a specific worksheet.
-
-**Parameters:**
-- `worksheetName` (string): Name of the worksheet
+**Performance Optimization:**
+For large Excel files (>5MB), the system uses a sampling algorithm to estimate row counts:
+- Samples every 100 rows to detect data presence
+- Continues sampling until no data is found
+- Provides fast estimation for very large datasets
 
 ## 📊 SQL Query Examples
 
@@ -146,6 +153,13 @@ GROUP BY category
 ORDER BY total_quantity DESC;
 ```
 
+### Getting Table Structure
+```sql
+DESCRIBE Sheet1;
+```
+
+**Note:** All SQL queries now require specifying the `filePath` parameter when using the MCP tools. The Excel file is loaded and processed for each query, ensuring you always work with the latest data.
+
 ## 🔧 Supported SQL Features
 
 ### SELECT Operations
@@ -163,6 +177,9 @@ ORDER BY total_quantity DESC;
 - `COUNT(*)` - Count all rows
 - `COUNT(column)` - Count non-null values
 - `SUM(column)` - Sum numeric values
+- `MAX(column)` - Find maximum value
+- `MIN(column)` - Find minimum value
+- `AVG(column)` - Calculate average value
 
 ### Other Features
 - `ORDER BY` with `ASC`/`DESC`
@@ -177,7 +194,8 @@ ORDER BY total_quantity DESC;
 - No subqueries
 - No HAVING clauses
 - No UNION operations
-- Maximum 10,000 rows per worksheet for performance
+- Each query requires specifying the file path (no persistent file loading)
+- For large files (>5MB), row counts are estimated using sampling for performance
 
 ## 🏗️ Development
 

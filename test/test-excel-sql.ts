@@ -1,145 +1,150 @@
-import { ExcelSqlQuery } from './excel-sql-query';
+import { ExcelSqlQuery } from '../src/excel-sql-query.js';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import * as fs from 'fs';
 
 /**
- * 测试Excel SQL查询功能
+ * Test Excel SQL query functionality
  */
-async function testExcelSqlQuery() {
-  const sqlQuery = new ExcelSqlQuery();
-  
+async function testExcelSql() {
   try {
-    // 加载Excel文件
-  const excelPath = path.join(__dirname, 'simple-test.xlsx');
-  console.log('🔄 正在加载Excel文件...');
-  await sqlQuery.loadExcelFile(excelPath);
+    const excelQuery = new ExcelSqlQuery();
+    const testFilePath = path.join(__dirname, 'test-data.xlsx');
     
-    // 获取工作表信息
-    const worksheets = sqlQuery.getWorksheetNames();
-    console.log(`📋 可用工作表: ${worksheets.join(', ')}`);
+    // Check if test file exists
+    if (!fs.existsSync(testFilePath)) {
+      console.log('❌ Test file not found');
+      return;
+    }
+    
+    // Load Excel file
+    console.log('🔄 Loading Excel file...');
+    
+    // Get worksheet information
+    const worksheetInfo = await excelQuery.getWorksheetInfo(testFilePath);
+    const worksheets = worksheetInfo.map(info => info.table_name);
+    console.log(`📋 Available worksheets: ${worksheets.join(', ')}`);
     
     if (worksheets.length === 0) {
-      console.log('❌ 没有找到工作表');
+      console.log('❌ No worksheets found');
       return;
     }
     
     const sheetName = worksheets[0];
-    const columns = sqlQuery.getColumnNames(sheetName);
-    const rowCount = sqlQuery.getRowCount(sheetName);
+    const rowCount = worksheetInfo[0].row_count;
     
-    console.log(`📊 工作表 "${sheetName}" 信息:`);
-    console.log(`   - 列数: ${columns.length}`);
-    console.log(`   - 行数: ${rowCount}`);
-    console.log(`   - 列名: ${columns.join(', ')}`);
+    // Get column information (execute a simple query to get column names)
+    const sampleResult = await excelQuery.executeQuery(`SELECT * FROM ${sheetName} LIMIT 1`, testFilePath);
+    const columns = sampleResult.length > 0 ? Object.keys(sampleResult[0]) : [];
     
-    console.log('\n🧪 开始测试SQL查询...\n');
+    console.log(`📊 Worksheet "${sheetName}" information:`);
+    console.log(`   - Columns: ${columns.length}`);
+    console.log(`   - Rows: ${rowCount}`);
+    console.log(`   - Column names: ${columns.join(', ')}`);
     
-    // 测试用例1: SELECT * 查询
-    console.log('测试1: SELECT * 查询');
+    console.log('\n🧪 Starting SQL query tests...\n');
+    
+    // Test case 1: SELECT * query
+    console.log('Test 1: SELECT * query');
     try {
-      const result1 = await sqlQuery.executeQuery(`SELECT * FROM ${sheetName} LIMIT 5`);
-      console.log(`✅ 查询成功，返回 ${result1.length} 行数据`);
+      const result1 = await excelQuery.executeQuery(`SELECT * FROM ${sheetName}`, testFilePath);
+      console.log(`✅ Query successful, returned ${result1.length} rows of data`);
       if (result1.length > 0) {
-        console.log('   示例数据:', JSON.stringify(result1[0], null, 2));
+        console.log('   Sample data:', JSON.stringify(result1[0], null, 2));
+      } else {
+        console.log('   All data:', JSON.stringify(result1, null, 2));
       }
-      console.log('   所有数据:', JSON.stringify(result1, null, 2));
     } catch (error) {
-      console.log(`❌ 查询失败: ${error}`);
+      console.log(`❌ Query failed: ${error}`);
     }
     
-    // 测试用例2: 指定列查询
-    console.log('\n测试2: 指定列查询');
-    if (columns.length >= 2) {
-      const col1 = columns[0];
-      const col2 = columns[1];
+    // Test case 2: Specific column query
+    console.log('\nTest 2: Specific column query');
+    if (columns.length > 0) {
+      const firstColumn = columns[0];
       try {
-        const result2 = await sqlQuery.executeQuery(`SELECT "${col1}", "${col2}" FROM ${sheetName} LIMIT 3`);
-        console.log(`✅ 查询成功，返回 ${result2.length} 行数据`);
+        const result2 = await excelQuery.executeQuery(`SELECT ${firstColumn} FROM ${sheetName}`, testFilePath);
+        console.log(`✅ Query successful, returned ${result2.length} rows of data`);
         if (result2.length > 0) {
-          console.log('   示例数据:', JSON.stringify(result2[0], null, 2));
+          console.log('   Sample data:', JSON.stringify(result2[0], null, 2));
+        } else {
+          console.log('   All data:', JSON.stringify(result2, null, 2));
         }
-        console.log('   所有数据:', JSON.stringify(result2, null, 2));
       } catch (error) {
-        console.log(`❌ 查询失败: ${error}`);
+        console.log(`❌ Query failed: ${error}`);
       }
     }
     
-    // 测试用例3: DISTINCT查询
-    console.log('\n测试3: DISTINCT查询');
+    // Test case 3: DISTINCT query
+    console.log('\nTest 3: DISTINCT query');
     if (columns.length > 0) {
-      const col = columns[0];
+      const firstColumn = columns[0];
       try {
-        const result3 = await sqlQuery.executeQuery(`SELECT DISTINCT "${col}" FROM ${sheetName}`);
-        console.log(`✅ 查询成功，返回 ${result3.length} 个不重复值`);
-        console.log('   所有值:', JSON.stringify(result3, null, 2));
+        const result3 = await excelQuery.executeQuery(`SELECT DISTINCT ${firstColumn} FROM ${sheetName}`, testFilePath);
+        console.log(`✅ Query successful, returned ${result3.length} unique values`);
+        console.log('   All values:', JSON.stringify(result3, null, 2));
       } catch (error) {
-        console.log(`❌ 查询失败: ${error}`);
+        console.log(`❌ Query failed: ${error}`);
       }
     }
     
-    // 测试用例4: COUNT查询
-    console.log('\n测试4: COUNT查询');
+    // Test case 4: COUNT query
+    console.log('\nTest 4: COUNT query');
     try {
-      const result4 = await sqlQuery.executeQuery(`SELECT COUNT(*) FROM ${sheetName}`);
-      console.log(`✅ 查询成功，结果:`, JSON.stringify(result4, null, 2));
+      const result4 = await excelQuery.executeQuery(`SELECT COUNT(*) FROM ${sheetName}`, testFilePath);
+      console.log(`✅ Query successful, result:`, JSON.stringify(result4, null, 2));
     } catch (error) {
-      console.log(`❌ 查询失败: ${error}`);
+      console.log(`❌ Query failed: ${error}`);
     }
     
-    // 测试用例5: WHERE条件查询
-    console.log('\n测试5: WHERE条件查询');
+    // Test case 5: WHERE condition query
+    console.log('\nTest 5: WHERE condition query');
     if (columns.length > 0) {
-      const col = columns[0];
+      const firstColumn = columns[0];
       try {
-        const result5 = await sqlQuery.executeQuery(`SELECT COUNT(*) FROM ${sheetName} WHERE "${col}" IS NOT NULL`);
-        console.log(`✅ 查询成功，非空行数: ${result5[0]['count(*)']} 行`);
+        const result5 = await excelQuery.executeQuery(`SELECT COUNT(*) FROM ${sheetName} WHERE ${firstColumn} IS NOT NULL`, testFilePath);
+        console.log(`✅ Query successful, non-null rows: ${result5[0]['count(*)']} rows`);
       } catch (error) {
-        console.log(`❌ 查询失败: ${error}`);
+        console.log(`❌ Query failed: ${error}`);
       }
     }
     
-    // 测试用例6: ORDER BY查询
-    console.log('\n测试6: ORDER BY查询');
+    // Test case 6: ORDER BY query
+    console.log('\nTest 6: ORDER BY query');
     if (columns.length > 0) {
-      const col = columns[0];
+      const firstColumn = columns[0];
       try {
-        const result6 = await sqlQuery.executeQuery(`SELECT * FROM ${sheetName} ORDER BY "${col}" LIMIT 3`);
-        console.log(`✅ 查询成功，返回 ${result6.length} 行排序数据`);
+        const result6 = await excelQuery.executeQuery(`SELECT * FROM ${sheetName} ORDER BY ${firstColumn}`, testFilePath);
+        console.log(`✅ Query successful, returned ${result6.length} rows of sorted data`);
       } catch (error) {
-        console.log(`❌ 查询失败: ${error}`);
+        console.log(`❌ Query failed: ${error}`);
       }
     }
     
-    // 测试不支持的语法
-    console.log('\n🚫 测试不支持的语法...\n');
+    // Test unsupported syntax
+    console.log('\n🚫 Testing unsupported syntax...\n');
     
     const unsupportedQueries = [
-      `SELECT * FROM ${sheetName} GROUP BY "${columns[0] || 'col1'}"`,
-      `SELECT * FROM ${sheetName} HAVING COUNT(*) > 1`,
-      `SELECT * FROM ${sheetName} a JOIN ${sheetName} b ON a.id = b.id`,
-      `UPDATE ${sheetName} SET col1 = 'value'`,
-      `INSERT INTO ${sheetName} VALUES (1, 2, 3)`
+      'INSERT INTO Sheet1 VALUES (1, 2, 3)',
+      'UPDATE Sheet1 SET col1 = 1',
+      'DELETE FROM Sheet1',
+      'SELECT * FROM Sheet1 HAVING COUNT(*) > 1',
+      'WITH cte AS (SELECT * FROM Sheet1) SELECT * FROM cte'
     ];
     
     for (let i = 0; i < unsupportedQueries.length; i++) {
-      console.log(`不支持语法测试${i + 1}: ${unsupportedQueries[i]}`);
+      console.log(`Unsupported syntax test ${i + 1}: ${unsupportedQueries[i]}`);
       try {
-        await sqlQuery.executeQuery(unsupportedQueries[i]);
-        console.log('❌ 应该抛出异常但没有');
+        await excelQuery.executeQuery(unsupportedQueries[i], testFilePath);
+        console.log('❌ Should have thrown an exception but did not');
       } catch (error) {
-        console.log(`✅ 正确抛出异常: ${error}`);
+        console.log(`✅ Correctly threw exception: ${error}`);
       }
     }
     
   } catch (error) {
-    console.error('❌ 测试过程中发生错误:', error);
+    console.error('❌ Error occurred during testing:', error);
   }
 }
 
-// 运行测试
-testExcelSqlQuery().catch(console.error);
-
-export { testExcelSqlQuery };
+// Run tests
+testExcelSql();

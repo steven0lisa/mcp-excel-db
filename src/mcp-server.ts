@@ -12,19 +12,17 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 /**
- * MCP Excel Database Server
- * Provides SQL query capabilities for Excel files
+ * MCP Server for Excel SQL querying
  */
 export class ExcelMcpServer {
   private server: Server;
   private excelQuery: ExcelSqlQuery;
-  private loadedFile: string | null = null;
 
   constructor() {
     this.server = new Server(
       {
-        name: 'excel-db-server',
-        version: '1.0.0',
+        name: 'excel-sql-query',
+        version: '1.0.1',
       },
       {
         capabilities: {
@@ -43,53 +41,35 @@ export class ExcelMcpServer {
       return {
         tools: [
           {
-            name: 'load_excel_file',
-            description: 'Load an Excel file for SQL querying',
+            name: 'execute_sql_query',
+            description: 'Execute SQL query on an Excel file',
             inputSchema: {
               type: 'object',
               properties: {
                 filePath: {
                   type: 'string',
-                  description: 'Path to the Excel file to load',
+                  description: 'Path to the Excel file',
                 },
-              },
-              required: ['filePath'],
-            },
-          },
-          {
-            name: 'execute_sql_query',
-            description: 'Execute SQL query on the loaded Excel file',
-            inputSchema: {
-              type: 'object',
-              properties: {
                 sql: {
                   type: 'string',
                   description: 'SQL query to execute (SELECT statements only)',
                 },
               },
-              required: ['sql'],
+              required: ['filePath', 'sql'],
             },
           },
           {
             name: 'get_worksheet_info',
-            description: 'Get information about worksheets in the loaded Excel file',
-            inputSchema: {
-              type: 'object',
-              properties: {},
-            },
-          },
-          {
-            name: 'get_worksheet_columns',
-            description: 'Get column names for a specific worksheet',
+            description: 'Get information about worksheets in an Excel file',
             inputSchema: {
               type: 'object',
               properties: {
-                worksheetName: {
+                filePath: {
                   type: 'string',
-                  description: 'Name of the worksheet',
+                  description: 'Path to the Excel file',
                 },
               },
-              required: ['worksheetName'],
+              required: ['filePath'],
             },
           },
         ] as Tool[],
@@ -102,17 +82,11 @@ export class ExcelMcpServer {
 
       try {
         switch (name) {
-          case 'load_excel_file':
-            return await this.handleLoadExcelFile(args as { filePath: string });
-
           case 'execute_sql_query':
-            return await this.handleExecuteSqlQuery(args as { sql: string });
+            return await this.handleExecuteSqlQuery(args as { filePath: string; sql: string });
 
           case 'get_worksheet_info':
-            return await this.handleGetWorksheetInfo();
-
-          case 'get_worksheet_columns':
-            return await this.handleGetWorksheetColumns(args as { worksheetName: string });
+            return await this.handleGetWorksheetInfo(args as { filePath: string });
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -131,8 +105,8 @@ export class ExcelMcpServer {
     });
   }
 
-  private async handleLoadExcelFile(args: { filePath: string }) {
-    const { filePath } = args;
+  private async handleExecuteSqlQuery(args: { filePath: string; sql: string }) {
+    const { filePath, sql } = args;
 
     // Validate file exists
     if (!fs.existsSync(filePath)) {
@@ -145,28 +119,7 @@ export class ExcelMcpServer {
       throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
     }
 
-    await this.excelQuery.loadExcelFile(filePath);
-    this.loadedFile = filePath;
-
-    const worksheetNames = this.excelQuery.getWorksheetNames();
-    
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `✅ Excel file loaded successfully: ${path.basename(filePath)}\n\nAvailable worksheets:\n${worksheetNames.map(name => `- ${name}`).join('\n')}`,
-        },
-      ],
-    };
-  }
-
-  private async handleExecuteSqlQuery(args: { sql: string }) {
-    if (!this.loadedFile) {
-      throw new Error('No Excel file loaded. Please load a file first using load_excel_file.');
-    }
-
-    const { sql } = args;
-    const results = await this.excelQuery.executeQuery(sql);
+    const results = await this.excelQuery.executeQuery(sql, filePath);
 
     // Format results as a table
     let output = `📊 Query Results (${results.length} rows):\n\n`;
@@ -184,7 +137,7 @@ export class ExcelMcpServer {
       // Add data rows (limit to first 100 rows for readability)
       const displayRows = results.slice(0, 100);
       for (const row of displayRows) {
-        const values = columns.map(col => {
+        const values = columns.map((col: string) => {
           const value = row[col];
           return value === null || value === undefined ? '' : String(value);
         });
@@ -206,47 +159,27 @@ export class ExcelMcpServer {
     };
   }
 
-  private async handleGetWorksheetInfo() {
-    if (!this.loadedFile) {
-      throw new Error('No Excel file loaded. Please load a file first using load_excel_file.');
+  private async handleGetWorksheetInfo(args: { filePath: string }) {
+    const { filePath } = args;
+
+    // Validate file exists
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
     }
 
-    const worksheetNames = this.excelQuery.getWorksheetNames();
-    let output = `📋 Worksheet Information for: ${path.basename(this.loadedFile)}\n\n`;
+    // Validate file extension
+    const ext = path.extname(filePath).toLowerCase();
+    if (!['.xlsx', '.xls'].includes(ext)) {
+      throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
+    }
+
+    const worksheetInfo = await this.excelQuery.getWorksheetInfo(filePath);
+    let output = `📋 Worksheet Information for: ${path.basename(filePath)}\n\n`;
     
-    for (const name of worksheetNames) {
-      const rowCount = this.excelQuery.getRowCount(name);
-      const columns = this.excelQuery.getColumnNames(name);
-      
-      output += `**${name}**\n`;
-      output += `- Rows: ${rowCount}\n`;
-      output += `- Columns: ${columns.length}\n`;
-      output += `- Column Names: ${columns.join(', ')}\n\n`;
+    for (const info of worksheetInfo) {
+      output += `**${info.table_name}**\n`;
+      output += `- Rows: ${info.row_count}\n\n`;
     }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: output,
-        },
-      ],
-    };
-  }
-
-  private async handleGetWorksheetColumns(args: { worksheetName: string }) {
-    if (!this.loadedFile) {
-      throw new Error('No Excel file loaded. Please load a file first using load_excel_file.');
-    }
-
-    const { worksheetName } = args;
-    const columns = this.excelQuery.getColumnNames(worksheetName);
-    
-    if (columns.length === 0) {
-      throw new Error(`Worksheet "${worksheetName}" not found or has no columns.`);
-    }
-
-    const output = `📋 Columns in worksheet "${worksheetName}":\n\n${columns.map((col, index) => `${index + 1}. ${col}`).join('\n')}`;
 
     return {
       content: [

@@ -153,6 +153,9 @@ ORDER BY total_quantity DESC;
 - `COUNT(*)` - 计算所有行数
 - `COUNT(column)` - 计算非空值数量
 - `SUM(column)` - 计算数值总和
+- `MAX(column)` - 查找最大值
+- `MIN(column)` - 查找最小值
+- `AVG(column)` - 计算平均值
 
 ### 其他功能
 - `ORDER BY` 配合 `ASC`/`DESC`

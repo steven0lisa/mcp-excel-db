@@ -1,58 +1,33 @@
 import ExcelJS from 'exceljs';
-import { createRequire } from 'module';
+import { Parser } from 'node-sql-parser';
 import * as path from 'path';
 
-const require = createRequire(import.meta.url);
-const NodeSqlParser = require('node-sql-parser');
-
 /**
- * Excel SQL查询工具类
- * 支持对Excel文件进行简单的SQL查询操作
+ * Excel SQL Query Tool Class
+ * Supports simple SQL query operations on Excel files
  */
 export class ExcelSqlQuery {
-  private workbook: ExcelJS.Workbook | null = null;
   private parser: any;
-  private worksheetData: Map<string, any[]> = new Map();
 
   constructor() {
-    this.parser = new NodeSqlParser.Parser();
+    this.parser = new Parser();
   }
 
   /**
-   * 加载Excel文件
+   * Preload worksheet data
    */
-  async loadExcelFile(filePath: string): Promise<void> {
-    try {
-      this.workbook = new ExcelJS.Workbook();
-      
-      // 使用流式读取，避免内存问题
-      const stream = require('fs').createReadStream(filePath);
-      await this.workbook.xlsx.read(stream);
-      
-      // 预加载所有工作表数据到内存中
-      await this.preloadWorksheetData();
-      
-      console.log(`✅ Excel文件加载成功: ${path.basename(filePath)}`);
-    } catch (error) {
-      console.error('Excel文件加载详细错误:', error);
-      throw new Error(`加载Excel文件失败: ${error}`);
-    }
-  }
-
-  /**
-   * 预加载所有工作表数据
-   */
-  private async preloadWorksheetData(): Promise<void> {
-    if (!this.workbook) {
-      throw new Error('Excel文件未加载');
-    }
-
-    this.workbook.eachSheet((worksheet) => {
+  private async preloadWorksheetData(workbook: ExcelJS.Workbook, filePath: string): Promise<Map<string, any[]>> {
+    const worksheetData: Map<string, any[]> = new Map();
+    const fs = require('fs');
+    const stats = fs.statSync(filePath);
+    const fileSizeInMB = stats.size / (1024 * 1024);
+    
+    workbook.eachSheet((worksheet: any) => {
       const sheetData: any[] = [];
       const headers: string[] = [];
       
       try {
-        // 获取表头
+        // Get headers
         const headerRow = worksheet.getRow(1);
         const maxCols = headerRow.cellCount;
         
@@ -61,16 +36,24 @@ export class ExcelSqlQuery {
           headers[colNumber - 1] = cell.value?.toString() || `Column${colNumber}`;
         }
 
-        // 限制加载的行数，避免内存溢出
-        const maxRows = Math.min(worksheet.rowCount, 10000); // 最多加载10000行
+        let maxRows: number;
         
-        // 获取数据行
+        // For large files (>5MB), use sampling algorithm to estimate row count
+        if (fileSizeInMB > 5) {
+          maxRows = this.estimateRowCount(worksheet);
+          console.log(`📊 Large file detected (${fileSizeInMB.toFixed(2)}MB), estimated rows by sampling: ${maxRows}`);
+        } else {
+          // Limit loaded rows to avoid memory overflow
+          maxRows = Math.min(worksheet.rowCount, 10000); // Load maximum 10000 rows
+        }
+
+        // Get data rows
         for (let rowNumber = 2; rowNumber <= maxRows; rowNumber++) {
           const row = worksheet.getRow(rowNumber);
           const rowData: any = {};
           let hasData = false;
           
-          // 遍历所有列
+          // Iterate through all columns
           for (let colNumber = 1; colNumber <= maxCols; colNumber++) {
             const cell = row.getCell(colNumber);
             const header = headers[colNumber - 1];
@@ -82,133 +65,209 @@ export class ExcelSqlQuery {
             }
           }
           
-          // 只添加非空行
+          // Only add non-empty rows
           if (hasData) {
             sheetData.push(rowData);
           }
         }
 
-        this.worksheetData.set(worksheet.name, sheetData);
-        console.log(`📊 工作表 "${worksheet.name}" 数据加载完成，共 ${sheetData.length} 行 (最大 ${maxRows} 行)`);
-        console.log(`📋 表头信息:`, headers);
+        worksheetData.set(worksheet.name, sheetData);
+        console.log(`📊 Worksheet "${worksheet.name}" data loaded successfully, total ${sheetData.length} rows (max ${maxRows} rows)`);
+        console.log(`📋 Header info:`, headers);
         if (sheetData.length > 0) {
-          console.log(`📄 第一行数据示例:`, JSON.stringify(sheetData[0], null, 2));
+          console.log(`📄 First row data example:`, JSON.stringify(sheetData[0], null, 2));
         }
       } catch (error) {
-        console.error(`❌ 加载工作表 "${worksheet.name}" 时出错:`, error);
-        // 继续处理其他工作表
+        console.error(`❌ Error loading worksheet "${worksheet.name}":`, error);
+        // Continue processing other worksheets
       }
     });
+    
+    return worksheetData;
   }
 
   /**
-   * 执行SQL查询
+   * Sampling algorithm to estimate row count (for large files)
    */
-  async executeQuery(sql: string): Promise<any[]> {
+  private estimateRowCount(worksheet: any): number {
+    let currentRow = 2; // Start from row 2 (row 1 is header)
+    let lastDataRow = 2;
+    const jumpSize = 100;
+    
+    while (currentRow <= worksheet.rowCount) {
+      const row = worksheet.getRow(currentRow);
+      let hasData = false;
+      
+      // Check if current row has data
+      for (let colNumber = 1; colNumber <= row.cellCount; colNumber++) {
+        const cell = row.getCell(colNumber);
+        if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+          hasData = true;
+          break;
+        }
+      }
+      
+      if (hasData) {
+        lastDataRow = currentRow;
+        currentRow += jumpSize;
+      } else {
+        // No data, consider as termination
+        break;
+      }
+    }
+    
+    return lastDataRow;
+  }
+
+  /**
+   * Execute SQL query
+   */
+  async executeQuery(sql: string, filePath: string): Promise<any[]> {
     try {
-      // 解析SQL语句
+      // Load Excel file
+      const workbook = new ExcelJS.Workbook();
+      const stream = require('fs').createReadStream(filePath);
+      await workbook.xlsx.read(stream);
+      
+      // Preload all worksheet data into memory
+      const worksheetData = await this.preloadWorksheetData(workbook, filePath);
+      
+      console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
+      
+      // Parse SQL statement
       const ast = this.parser.astify(sql);
       
-      // 验证SQL语法支持
+      // Validate SQL syntax support
       this.validateSqlSupport(ast);
       
-      // 执行查询
-      return this.executeSelect(ast);
+      // Execute query
+      return this.executeSelect(ast, worksheetData);
       
     } catch (error) {
       if (error instanceof Error) {
-        throw new Error(`SQL查询执行失败: ${error.message}`);
+        throw new Error(`SQL query execution failed: ${error.message}`);
       }
-      throw new Error(`SQL查询执行失败: ${error}`);
+      throw new Error(`SQL query execution failed: ${error}`);
     }
   }
 
   /**
-   * 验证SQL语法支持
+   * Get worksheet information
+   */
+  async getWorksheetInfo(filePath: string): Promise<Array<{table_name: string, row_count: number}>> {
+    try {
+      // Load Excel file
+      const workbook = new ExcelJS.Workbook();
+      const stream = require('fs').createReadStream(filePath);
+      await workbook.xlsx.read(stream);
+      
+      // Preload all worksheet data into memory
+      const worksheetData = await this.preloadWorksheetData(workbook, filePath);
+      
+      console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
+      
+      const tables: Array<{table_name: string, row_count: number}> = [];
+      
+      for (const [sheetName, data] of worksheetData) {
+        tables.push({
+          table_name: sheetName,
+          row_count: data.length
+        });
+      }
+      
+      return tables;
+      
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`Failed to get worksheet information: ${error.message}`);
+      }
+      throw new Error(`Failed to get worksheet information: ${error}`);
+    }
+  }
+
+  /**
+   * Validate SQL syntax support
    */
   private validateSqlSupport(ast: any): void {
     if (!ast || ast.type !== 'select') {
-      throw new Error('不支持的SQL语法：仅支持SELECT查询');
+      throw new Error('Unsupported SQL syntax: Only SELECT queries are supported');
     }
 
     if (ast.having) {
-      throw new Error('不支持的SQL语法：不支持HAVING子句');
+      throw new Error('Unsupported SQL syntax: HAVING clause is not supported');
     }
 
     if (ast.with && ast.with.length > 0) {
-      throw new Error('不支持的SQL语法：不支持WITH子句');
+      throw new Error('Unsupported SQL syntax: WITH clause is not supported');
     }
 
     if (ast.union) {
-      throw new Error('不支持的SQL语法：不支持UNION操作');
+      throw new Error('Unsupported SQL syntax: UNION operations are not supported');
     }
 
-    // 检查JOIN操作
+    // Check JOIN operations
     if (ast.from && ast.from.length > 1) {
-      throw new Error('不支持的SQL语法：不支持多表JOIN操作');
+      throw new Error('Unsupported SQL syntax: Multi-table JOIN operations are not supported');
     }
 
-    // 检查子查询
-    if (ast.from && ast.from[0] && ast.from[0].expr && ast.from[0].expr.type === 'select') {
-      throw new Error('不支持的SQL语法：不支持子查询');
+    // Check subqueries
+    if (JSON.stringify(ast).includes('"type":"select"') && JSON.stringify(ast).match(/"type":"select"/g)!.length > 1) {
+      throw new Error('Unsupported SQL syntax: Subqueries are not supported');
     }
   }
 
   /**
-   * 执行SELECT查询
+   * Execute SELECT query
    */
-  private executeSelect(ast: any): any[] {
-    // 获取表名
+  private executeSelect(ast: any, worksheetData: Map<string, any[]>): any[] {
+    // Get table name
     const tableName = ast.from[0].table;
-    const sheetData = this.worksheetData.get(tableName);
+    const sheetData = worksheetData.get(tableName);
     
     if (!sheetData) {
-      throw new Error(`工作表 "${tableName}" 不存在`);
+      throw new Error(`Worksheet "${tableName}" does not exist`);
     }
 
     let result = [...sheetData];
 
-    // 应用WHERE条件
+    // Apply WHERE conditions
     if (ast.where) {
       result = this.applyWhereCondition(result, ast.where);
     }
 
-    // 应用GROUP BY
+    // Apply GROUP BY
     if (ast.groupby && ast.groupby.length > 0) {
       result = this.applyGroupBy(result, ast.groupby, ast.columns);
     } else {
-      // 应用ORDER BY
+      // Apply ORDER BY
       if (ast.orderby && ast.orderby.length > 0) {
         result = this.applyOrderBy(result, ast.orderby);
       }
 
-      // 应用SELECT字段选择
+      // Apply SELECT field selection
       result = this.applySelectFields(result, ast.columns);
 
-      // 应用DISTINCT
+      // Apply DISTINCT
       if (ast.distinct === 'DISTINCT') {
         result = this.applyDistinct(result);
       }
-    }
 
-    // 应用LIMIT
-    if (ast.limit) {
-      const limitValue = ast.limit.value[0].value;
-      result = result.slice(0, limitValue);
+      // Apply aggregate functions
+      result = this.applyAggregateFunction(result, ast.columns);
     }
 
     return result;
   }
 
   /**
-   * 应用WHERE条件过滤
+   * Apply WHERE conditions
    */
   private applyWhereCondition(data: any[], whereClause: any): any[] {
     return data.filter(row => this.evaluateCondition(row, whereClause));
   }
 
   /**
-   * 评估条件表达式
+   * Evaluate condition expression
    */
   private evaluateCondition(row: any, condition: any): boolean {
     if (!condition) return true;
@@ -220,277 +279,340 @@ export class ExcelSqlQuery {
         
         switch (condition.operator) {
           case '=': return left == right;
-          case '>': return left > right;
-          case '<': return left < right;
-          case '>=': return left >= right;
-          case '<=': return left <= right;
-          case '!=': 
+          case '!=': return left != right;
           case '<>': return left != right;
+          case '>': return left > right;
+          case '>=': return left >= right;
+          case '<': return left < right;
+          case '<=': return left <= right;
           case 'LIKE': 
-            const pattern = right.toString().replace(/%/g, '.*');
-            return new RegExp(pattern, 'i').test(left?.toString() || '');
-          case 'AND':
+            const pattern = right.toString().replace(/%/g, '.*').replace(/_/g, '.');
+            return new RegExp(pattern, 'i').test(left.toString());
+          case 'AND': 
             return this.evaluateCondition(row, condition.left) && this.evaluateCondition(row, condition.right);
-          case 'OR':
+          case 'OR': 
             return this.evaluateCondition(row, condition.left) || this.evaluateCondition(row, condition.right);
-          case 'IS':
-            if (condition.right && condition.right.type === 'null') {
-              return left === null || left === undefined;
-            }
-            return left === right;
-          case 'IS NOT':
-            if (condition.right && condition.right.type === 'null') {
-              return left !== null && left !== undefined;
-            }
-            return left !== right;
           default:
-            throw new Error(`不支持的操作符: ${condition.operator}`);
+            throw new Error(`Unsupported operator: ${condition.operator}`);
         }
+      
       case 'unary_expr':
         if (condition.operator === 'NOT') {
           return !this.evaluateCondition(row, condition.expr);
         }
-        throw new Error(`不支持的一元操作符: ${condition.operator}`);
+        throw new Error(`Unsupported unary operator: ${condition.operator}`);
+      
       default:
-        throw new Error(`不支持的条件类型: ${condition.type}`);
+        throw new Error(`Unsupported condition type: ${condition.type}`);
     }
   }
 
   /**
-   * 从表达式获取值
+   * Get value from expression
    */
   private getValueFromExpression(row: any, expr: any): any {
-    if (!expr) {
-      return null;
-    }
-    
-    if (expr.type === 'column_ref') {
-      return row[expr.column];
-    }
-    
-    if (expr.type === 'single_quote_string' || expr.type === 'string') {
-      return expr.value;
-    }
-    
-    if (expr.type === 'double_quote_string') {
-      // 双引号字符串可能是列名或字符串值
-      // 先检查是否是列名
-      if (row.hasOwnProperty(expr.value)) {
-        return row[expr.value];
-      }
-      // 否则作为字符串值
-      return expr.value;
-    }
-    
-    if (expr.type === 'number') {
-      return expr.value;
-    }
-    
-    if (expr.type === 'null') {
-      return null;
-    }
-    
-    if (expr.type === 'binary_expr') {
-      // 处理二元表达式，如 IS NULL, IS NOT NULL 等
-      return this.evaluateCondition(row, expr);
-    }
+    if (!expr) return null;
 
-    throw new Error(`不支持的表达式类型: ${expr.type}`);
+    switch (expr.type) {
+      case 'column_ref':
+        return row[expr.column];
+      case 'number':
+        return expr.value;
+      case 'string':
+        return expr.value;
+      case 'single_quote_string':
+        return expr.value;
+      case 'null':
+        return null;
+      case 'bool':
+        return expr.value;
+      case 'binary_expr':
+        const left = this.getValueFromExpression(row, expr.left);
+        const right = this.getValueFromExpression(row, expr.right);
+        
+        switch (expr.operator) {
+          case '+': return Number(left) + Number(right);
+          case '-': return Number(left) - Number(right);
+          case '*': return Number(left) * Number(right);
+          case '/': return Number(left) / Number(right);
+          case '%': return Number(left) % Number(right);
+          default:
+            throw new Error(`Unsupported arithmetic operator: ${expr.operator}`);
+        }
+      default:
+        throw new Error(`Unsupported expression type: ${expr.type}`);
+    }
   }
 
   /**
-   * 应用GROUP BY分组
+   * Apply GROUP BY
    */
   private applyGroupBy(data: any[], groupBy: any[], columns: any[]): any[] {
-    // 获取分组字段
-    const groupFields = groupBy.map(g => g.column);
-    
-    // 按分组字段进行分组
+    // Group by grouping fields
     const groups = new Map<string, any[]>();
     
-    data.forEach(row => {
-      const groupKey = groupFields.map(field => row[field]).join('|');
+    for (const row of data) {
+      const groupKey = groupBy.map(gb => row[gb.column]).join('|');
       if (!groups.has(groupKey)) {
         groups.set(groupKey, []);
       }
       groups.get(groupKey)!.push(row);
-    });
-    
-    // 对每个分组应用聚合函数
+    }
+
+    // Apply aggregate functions to each group
     const result: any[] = [];
-    
-    groups.forEach((groupData, groupKey) => {
+    for (const [groupKey, groupRows] of groups) {
       const groupResult: any = {};
       
-      // 添加分组字段到结果
-      const groupValues = groupKey.split('|');
-      groupFields.forEach((field, index) => {
-        groupResult[field] = groupValues[index];
+      // Add grouping fields
+      groupBy.forEach((gb, index) => {
+        groupResult[gb.column] = groupKey.split('|')[index];
       });
-      
-      // 处理SELECT列
-      columns.forEach(col => {
-        if (col.expr.type === 'aggr_func') {
-          const funcName = col.expr.name.toLowerCase();
-          const alias = col.as || `${funcName}(${col.expr.args?.type === 'star' ? '*' : col.expr.args?.expr?.column || ''})`;
+
+      // Process aggregate functions
+      for (const col of columns) {
+        if (col.expr && col.expr.type === 'aggr_func') {
+          const funcName = col.expr.name.toUpperCase();
+          const columnName = col.expr.args?.value?.[0]?.column || col.expr.args?.value?.[0]?.value;
           
           switch (funcName) {
-            case 'count':
-              if (col.expr.args?.type === 'star') {
-                groupResult[alias] = groupData.length;
-              } else if (col.expr.args?.expr?.column) {
-                const field = col.expr.args.expr.column;
-                groupResult[alias] = groupData.filter(row => 
-                  row[field] !== null && row[field] !== undefined && row[field] !== ''
+            case 'COUNT':
+              if (columnName === '*') {
+                groupResult[col.as || `COUNT(*)`] = groupRows.length;
+              } else {
+                const nonNullCount = groupRows.filter(row => 
+                  row[columnName] !== null && row[columnName] !== undefined && row[columnName] !== ''
                 ).length;
-              } else {
-                groupResult[alias] = groupData.length;
+                groupResult[col.as || `COUNT(${columnName})`] = nonNullCount;
               }
               break;
-            case 'sum':
-              if (col.expr.args?.expr?.column) {
-                const field = col.expr.args.expr.column;
-                groupResult[alias] = groupData.reduce((sum, row) => {
-                  const value = row[field];
-                  if (value !== null && value !== undefined && !isNaN(Number(value))) {
-                    return sum + Number(value);
-                  }
-                  return sum;
-                }, 0);
+              
+            case 'SUM':
+              if (!columnName) {
+                throw new Error('SUM function requires column name specification');
+              }
+              const sumValues = groupRows
+                .map(row => row[columnName])
+                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+                .map(val => Number(val));
+              groupResult[col.as || `SUM(${columnName})`] = sumValues.reduce((sum, val) => sum + val, 0);
+              break;
+
+            case 'MAX':
+              if (!columnName) {
+                throw new Error('MAX function requires column name specification');
+              }
+              const maxValues = groupRows
+                .map(row => row[columnName])
+                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+                .map(val => Number(val));
+              if (maxValues.length === 0) {
+                groupResult[col.as || `MAX(${columnName})`] = null;
               } else {
-                throw new Error('SUM函数需要指定列名');
+                groupResult[col.as || `MAX(${columnName})`] = Math.max(...maxValues);
               }
               break;
+
+            case 'MIN':
+              if (!columnName) {
+                throw new Error('MIN function requires column name specification');
+              }
+              const minValues = groupRows
+                .map(row => row[columnName])
+                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+                .map(val => Number(val));
+              if (minValues.length === 0) {
+                groupResult[col.as || `MIN(${columnName})`] = null;
+              } else {
+                groupResult[col.as || `MIN(${columnName})`] = Math.min(...minValues);
+              }
+              break;
+
+            case 'AVG':
+              if (!columnName) {
+                throw new Error('AVG function requires column name specification');
+              }
+              const avgValues = groupRows
+                .map(row => row[columnName])
+                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+                .map(val => Number(val));
+              if (avgValues.length === 0) {
+                groupResult[col.as || `AVG(${columnName})`] = null;
+              } else {
+                const sum = avgValues.reduce((sum, val) => sum + val, 0);
+                groupResult[col.as || `AVG(${columnName})`] = sum / avgValues.length;
+              }
+              break;
+              
             default:
-              throw new Error(`不支持的聚合函数: ${funcName}`);
+              throw new Error(`Unsupported aggregate function: ${funcName}`);
           }
-        } else if (col.expr.type === 'column_ref') {
-          // 非聚合列必须在GROUP BY中
-          const columnName = col.expr.column;
-          if (!groupFields.includes(columnName)) {
-            throw new Error(`列 "${columnName}" 必须出现在GROUP BY子句中或者是聚合函数`);
-          }
-          groupResult[col.as || columnName] = groupData[0][columnName];
+        } else if (col.expr && col.expr.type === 'column_ref') {
+          // Non-aggregate columns, take value from first row
+          groupResult[col.as || col.expr.column] = groupRows[0][col.expr.column];
         }
-      });
+      }
       
       result.push(groupResult);
-    });
-    
+    }
+
     return result;
   }
 
   /**
-   * 应用ORDER BY排序
+   * Apply ORDER BY
    */
   private applyOrderBy(data: any[], orderBy: any[]): any[] {
     return data.sort((a, b) => {
       for (const order of orderBy) {
-        const field = order.expr.column;
-        const direction = order.type === 'DESC' ? -1 : 1;
+        const columnName = order.expr.column;
+        const aVal = a[columnName];
+        const bVal = b[columnName];
         
-        const aVal = a[field];
-        const bVal = b[field];
+        let comparison = 0;
+        if (aVal < bVal) comparison = -1;
+        else if (aVal > bVal) comparison = 1;
         
-        if (aVal < bVal) return -1 * direction;
-        if (aVal > bVal) return 1 * direction;
+        if (comparison !== 0) {
+          return order.type === 'DESC' ? -comparison : comparison;
+        }
       }
       return 0;
     });
   }
 
   /**
-   * 应用字段选择
+   * Apply SELECT field selection
    */
   private applySelectFields(data: any[], columns: any[]): any[] {
-    if (columns.length === 1 && columns[0].expr.column === '*') {
+    if (columns.length === 1 && columns[0].expr.type === 'column_ref' && columns[0].expr.column === '*') {
       return data;
-    }
-
-    // 检查是否有聚合函数
-    if (columns.some(col => col.expr.type === 'aggr_func')) {
-      return this.applyAggregateFunction(data, columns);
     }
 
     return data.map(row => {
       const newRow: any = {};
-      columns.forEach(col => {
+      for (const col of columns) {
         if (col.expr.type === 'column_ref') {
-          // 处理普通列引用
-          const fieldName = col.expr.column;
-          const alias = col.as || fieldName;
-          newRow[alias] = row[fieldName];
-        } else if (col.expr.type === 'double_quote_string') {
-          // 处理双引号字符串类型的字段名
-          const fieldName = col.expr.value;
-          const alias = col.as || fieldName;
-          newRow[alias] = row[fieldName];
+          const columnName = col.expr.column;
+          const alias = col.as || columnName;
+          newRow[alias] = row[columnName];
+        } else if (col.expr.type === 'number' || col.expr.type === 'string') {
+          const alias = col.as || col.expr.value;
+          newRow[alias] = col.expr.value;
         }
-      });
+      }
       return newRow;
     });
   }
 
   /**
-   * 应用聚合函数
+   * Apply aggregate functions (non-GROUP BY case)
    */
   private applyAggregateFunction(data: any[], columns: any[]): any[] {
+    const hasAggregateFunction = columns.some(col => col.expr && col.expr.type === 'aggr_func');
+    
+    if (!hasAggregateFunction) {
+      return data;
+    }
+
     const result: any = {};
     
-    columns.forEach(col => {
-      if (col.expr.type === 'aggr_func') {
-        const funcName = col.expr.name.toLowerCase();
-        const alias = col.as || `${funcName}(${col.expr.args?.type === 'star' ? '*' : col.expr.args?.expr?.column || ''})`;
+    for (const col of columns) {
+      if (col.expr && col.expr.type === 'aggr_func') {
+        const funcName = col.expr.name.toUpperCase();
+        const columnName = col.expr.args?.value?.[0]?.column || col.expr.args?.value?.[0]?.value;
         
         switch (funcName) {
-          case 'count':
-            if (col.expr.args?.type === 'star') {
-              result[alias] = data.length;
-            } else if (col.expr.args?.expr?.column) {
-              const field = col.expr.args.expr.column;
-              result[alias] = data.filter(row => 
-                row[field] !== null && row[field] !== undefined && row[field] !== ''
+          case 'COUNT':
+            if (columnName === '*') {
+              result[col.as || 'COUNT(*)'] = data.length;
+            } else {
+              const nonNullCount = data.filter(row => 
+                row[columnName] !== null && row[columnName] !== undefined && row[columnName] !== ''
               ).length;
+              result[col.as || `COUNT(${columnName})`] = nonNullCount;
+            }
+            break;
+            
+          case 'SUM':
+            if (!columnName) {
+              throw new Error('SUM function requires column name specification');
+            }
+            const sumValues = data
+              .map(row => row[columnName])
+              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+              .map(val => Number(val));
+            result[col.as || `SUM(${columnName})`] = sumValues.reduce((sum, val) => sum + val, 0);
+            break;
+
+          case 'MAX':
+            if (!columnName) {
+              throw new Error('MAX function requires column name specification');
+            }
+            const maxValues = data
+              .map(row => row[columnName])
+              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+              .map(val => Number(val));
+            if (maxValues.length === 0) {
+              result[col.as || `MAX(${columnName})`] = null;
             } else {
-              result[alias] = data.length;
+              result[col.as || `MAX(${columnName})`] = Math.max(...maxValues);
             }
             break;
-          case 'sum':
-            if (col.expr.args?.expr?.column) {
-              const field = col.expr.args.expr.column;
-              result[alias] = data.reduce((sum, row) => {
-                const value = row[field];
-                if (value !== null && value !== undefined && !isNaN(Number(value))) {
-                  return sum + Number(value);
-                }
-                return sum;
-              }, 0);
+
+          case 'MIN':
+            if (!columnName) {
+              throw new Error('MIN function requires column name specification');
+            }
+            const minValues = data
+              .map(row => row[columnName])
+              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+              .map(val => Number(val));
+            if (minValues.length === 0) {
+              result[col.as || `MIN(${columnName})`] = null;
             } else {
-              throw new Error('SUM函数需要指定列名');
+              result[col.as || `MIN(${columnName})`] = Math.min(...minValues);
             }
             break;
-          case 'distinct':
-            // DISTINCT作为函数处理
-            if (col.expr.args && col.expr.args.expr && col.expr.args.expr.column) {
-              const field = col.expr.args.expr.column;
-              const distinctValues = [...new Set(data.map(row => row[field]))];
-              return distinctValues.map(value => ({ [field]: value }));
+
+          case 'AVG':
+            if (!columnName) {
+              throw new Error('AVG function requires column name specification');
+            }
+            const avgValues = data
+              .map(row => row[columnName])
+              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
+              .map(val => Number(val));
+            if (avgValues.length === 0) {
+              result[col.as || `AVG(${columnName})`] = null;
+            } else {
+              const sum = avgValues.reduce((sum, val) => sum + val, 0);
+              result[col.as || `AVG(${columnName})`] = sum / avgValues.length;
             }
             break;
+            
+          case 'DISTINCT':
+            if (!columnName) {
+              throw new Error('DISTINCT requires column name specification');
+            }
+            const distinctValues = [...new Set(data.map(row => row[columnName]))];
+            result[col.as || `DISTINCT(${columnName})`] = distinctValues;
+            break;
+            
           default:
-            throw new Error(`不支持的聚合函数: ${funcName}`);
+            throw new Error(`Unsupported aggregate function: ${funcName}`);
         }
       }
-    });
+    }
     
     return [result];
   }
 
   /**
-   * 应用DISTINCT去重
+   * Apply DISTINCT
    */
   private applyDistinct(data: any[]): any[] {
-    const seen = new Set();
+    const seen = new Set<string>();
     return data.filter(row => {
       const key = JSON.stringify(row);
       if (seen.has(key)) {
@@ -499,31 +621,5 @@ export class ExcelSqlQuery {
       seen.add(key);
       return true;
     });
-  }
-
-  /**
-   * 获取工作表列表
-   */
-  getWorksheetNames(): string[] {
-    return Array.from(this.worksheetData.keys());
-  }
-
-  /**
-   * 获取指定工作表的列名
-   */
-  getColumnNames(sheetName: string): string[] {
-    const data = this.worksheetData.get(sheetName);
-    if (!data || data.length === 0) {
-      return [];
-    }
-    return Object.keys(data[0]);
-  }
-
-  /**
-   * 获取指定工作表的行数
-   */
-  getRowCount(sheetName: string): number {
-    const data = this.worksheetData.get(sheetName);
-    return data ? data.length : 0;
   }
 }
