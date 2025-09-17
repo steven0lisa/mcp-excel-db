@@ -3,6 +3,7 @@
 
 <p align="center">
   Make your excel as a database to query with SQL.
+  <br>
   <a href="doc/zh-cn/README.md">[<strong>中文</strong>]</a> 
 </p>
 
