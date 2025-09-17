@@ -40,30 +40,37 @@ rm -f test_output.tmp
 # Update README badges
 echo "🔄 Updating README badges..."
 
-# Determine badge color based on test results
+# Determine badge color and format based on test results
 if [ "$PASSED_TESTS" = "$TOTAL_TESTS" ] && [ "$TOTAL_TESTS" != "0" ]; then
     TEST_COLOR="brightgreen"
     TEST_STATUS="$PASSED_TESTS%20passed"
 else
     TEST_COLOR="red"
-    TEST_STATUS="$PASSED_TESTS%2F$TOTAL_TESTS%20passed"
+    TEST_STATUS="$PASSED_TESTS%2F$TOTAL_TESTS%20failed"
 fi
 
-# Determine coverage color
+# Determine coverage color with better thresholds
 COVERAGE_NUM=$(echo $COVERAGE | sed 's/%//')
-if (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+if (( $(echo "$COVERAGE_NUM >= 90" | bc -l) )); then
     COVERAGE_COLOR="brightgreen"
+elif (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+    COVERAGE_COLOR="green"
+elif (( $(echo "$COVERAGE_NUM >= 70" | bc -l) )); then
+    COVERAGE_COLOR="yellowgreen"
 elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
     COVERAGE_COLOR="yellow"
-elif (( $(echo "$COVERAGE_NUM >= 40" | bc -l) )); then
+elif (( $(echo "$COVERAGE_NUM >= 50" | bc -l) )); then
     COVERAGE_COLOR="orange"
 else
     COVERAGE_COLOR="red"
 fi
 
-# Update README.md badges
-sed -i.bak "s|.*!\[Tests\].*|[![Tests](https://img.shields.io/badge/tests-$TEST_STATUS-$TEST_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
-sed -i.bak "s|.*!\[Coverage\].*|[![Coverage](https://img.shields.io/badge/coverage-$COVERAGE-$COVERAGE_COLOR.svg)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
+# Format coverage percentage for URL encoding
+COVERAGE_ENCODED=$(echo $COVERAGE | sed 's/%/%25/')
+
+# Update README.md badges with improved format
+sed -i.bak "s|.*\[Tests\].*|[![Tests](https://img.shields.io/badge/Tests-$TEST_STATUS-$TEST_COLOR?style=flat-square\&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
+sed -i.bak "s|.*\[Coverage\].*|[![Coverage](https://img.shields.io/badge/Coverage-$COVERAGE_ENCODED-$COVERAGE_COLOR?style=flat-square\&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)|" README.md
 
 # Remove backup file
 rm -f README.md.bak
@@ -75,7 +82,7 @@ echo "   - Coverage: $COVERAGE"
 # Show updated badges
 echo ""
 echo "📋 Updated badges in README.md:"
-grep -A1 "Tests\|Coverage" README.md | grep "badge"
+grep "Tests\|Coverage" README.md | grep "badge"
 
 echo ""
 echo "🎉 Test script completed successfully!"
