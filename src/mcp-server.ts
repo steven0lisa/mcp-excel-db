@@ -60,13 +60,31 @@ export class ExcelMcpServer {
           },
           {
             name: 'get_worksheet_info',
-            description: 'Get information about worksheets in an Excel file',
+            description: 'Get information about worksheets in an Excel file (lightweight - only returns worksheet names)',
             inputSchema: {
               type: 'object',
               properties: {
                 filePath: {
                   type: 'string',
                   description: 'Path to the Excel file',
+                },
+              },
+              required: ['filePath'],
+            },
+          },
+          {
+            name: 'get_worksheet_columns',
+            description: 'Get column information for worksheets in an Excel file (lightweight - only reads first row)',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                filePath: {
+                  type: 'string',
+                  description: 'Path to the Excel file',
+                },
+                worksheetName: {
+                  type: 'string',
+                  description: 'Optional: specific worksheet name to get columns for',
                 },
               },
               required: ['filePath'],
@@ -87,6 +105,9 @@ export class ExcelMcpServer {
 
           case 'get_worksheet_info':
             return await this.handleGetWorksheetInfo(args as { filePath: string });
+
+          case 'get_worksheet_columns':
+            return await this.handleGetWorksheetColumns(args as { filePath: string; worksheetName?: string });
 
           default:
             throw new Error(`Unknown tool: ${name}`);
@@ -175,10 +196,44 @@ export class ExcelMcpServer {
 
     const worksheetInfo = await this.excelQuery.getWorksheetInfo(filePath);
     let output = `📋 Worksheet Information for: ${path.basename(filePath)}\n\n`;
+    output += `Found ${worksheetInfo.length} worksheet(s):\n\n`;
     
     for (const info of worksheetInfo) {
       output += `**${info.table_name}**\n`;
-      output += `- Rows: ${info.row_count}\n\n`;
+    }
+    
+    output += `\n💡 To get row count for a specific worksheet, use SQL query: SELECT COUNT(*) FROM SheetName`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: output,
+        },
+      ],
+    };
+  }
+
+  private async handleGetWorksheetColumns(args: { filePath: string; worksheetName?: string }) {
+    const { filePath, worksheetName } = args;
+
+    // Validate file exists
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    // Validate file extension
+    const ext = path.extname(filePath).toLowerCase();
+    if (!['.xlsx', '.xls'].includes(ext)) {
+      throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
+    }
+
+    const columnsInfo = await this.excelQuery.getWorksheetColumns(filePath, worksheetName);
+    let output = `📋 Column Information for: ${path.basename(filePath)}\n\n`;
+    
+    for (const info of columnsInfo) {
+      output += `**${info.table_name}**\n`;
+      output += `Columns (${info.columns.length}): ${info.columns.join(', ')}\n\n`;
     }
 
     return {
