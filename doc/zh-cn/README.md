@@ -136,6 +136,62 @@ GROUP BY category
 ORDER BY total_quantity DESC;
 ```
 
+### IN 和 NOT IN 操作
+```sql
+-- 按多个值过滤
+SELECT * FROM products WHERE category IN ('电子产品', '图书', '服装');
+
+-- 排除多个值
+SELECT * FROM employees WHERE department NOT IN ('人事部', '财务部');
+
+-- 复合条件与 IN
+SELECT name, price FROM products 
+WHERE category IN ('A', 'B') AND price > 100;
+```
+
+### 表别名
+```sql
+SELECT a.name, a.price FROM Sheet1 AS a WHERE a.price < 10;
+```
+
+### JOIN 操作
+```sql
+-- 工作表间的 LEFT JOIN
+SELECT a.name, a.price, b.supplier 
+FROM Sheet1 AS a 
+LEFT JOIN Sheet2 AS b ON a.id = b.sheet1_id;
+
+-- 工作表间的 INNER JOIN
+SELECT a.*, b.rating 
+FROM products AS a 
+INNER JOIN suppliers AS b ON a.supplier_id = b.id;
+```
+
+### 字符串函数
+```sql
+-- 字符串处理函数
+SELECT 
+  LENGTH(name) as name_length,
+  UPPER(category) as upper_category,
+  LOWER(description) as lower_desc,
+  TRIM(notes) as clean_notes,
+  SUBSTR(name, 1, 3) as name_prefix,
+  REPLACE(description, '旧', '新') as updated_desc
+FROM products;
+```
+
+### 数学函数
+```sql
+-- 数学运算函数
+SELECT 
+  ABS(profit) as absolute_profit,
+  ROUND(price, 2) as rounded_price,
+  CEIL(rating) as ceiling_rating,
+  FLOOR(discount) as floor_discount,
+  RANDOM() as random_number
+FROM products;
+```
+
 ## 🔧 支持的 SQL 功能
 
 ### SELECT 操作
@@ -148,6 +204,34 @@ ORDER BY total_quantity DESC;
 - 模式匹配（`LIKE` 配合 `%` 通配符）
 - 逻辑运算符（`AND`、`OR`、`NOT`）
 - NULL 检查（`IS NULL`、`IS NOT NULL`）
+- 列表成员检查（`IN`、`NOT IN`）- 检查值是否存在于值列表中
+
+### 表别名
+- 表别名（`FROM Sheet1 AS a`）
+- 带别名的列引用（`a.column_name`）
+
+### JOIN 操作
+- `LEFT JOIN` - 工作表间的左外连接
+- `INNER JOIN` - 工作表间的内连接
+- 使用 `ON` 子句的连接条件
+
+### 字符串函数
+- `LENGTH(str)` - 获取字符串长度
+- `UPPER(str)` - 转换为大写
+- `LOWER(str)` - 转换为小写
+- `TRIM(str)` - 去除首尾空格
+- `LTRIM(str)` - 去除左侧空格
+- `RTRIM(str)` - 去除右侧空格
+- `SUBSTR(str, start, length)` - 提取子字符串（从1开始索引）
+- `INSTR(str, substr)` - 查找子字符串位置（从1开始，未找到返回0）
+- `REPLACE(str, from_str, to_str)` - 替换子字符串
+
+### 数学函数
+- `ABS(x)` - 绝对值
+- `ROUND(x, d)` - 四舍五入到d位小数
+- `CEIL(x)` / `CEILING(x)` - 向上取整
+- `FLOOR(x)` - 向下取整
+- `RANDOM()` - 生成随机整数
 
 ### 聚合函数
 - `COUNT(*)` - 计算所有行数
@@ -166,11 +250,12 @@ ORDER BY total_quantity DESC;
 ## 🚫 限制
 
 - 仅支持 SELECT 查询（不支持 INSERT、UPDATE、DELETE）
-- 不支持工作表间的 JOIN 操作
 - 不支持子查询
 - 不支持 HAVING 子句
 - 不支持 UNION 操作
-- 为了性能考虑，每个工作表最多支持 10,000 行
+- 比较运算符支持有限（支持 `=`、`!=`、`<`、`<=`，但不支持 `>`、`>=`、`IS NOT`）
+- 每个查询都需要指定文件路径（不支持持久化文件加载）
+- 对于大文件（>5MB），使用采样算法估算行数以提高性能
 
 ## 🏗️ 开发
 

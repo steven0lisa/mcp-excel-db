@@ -1,6 +1,9 @@
 import ExcelJS from 'exceljs';
-import { Parser } from 'node-sql-parser';
+import { createRequire } from 'module';
 import * as path from 'path';
+
+const require = createRequire(import.meta.url);
+const NodeSqlParser = require('node-sql-parser');
 
 /**
  * Excel SQL Query Tool Class
@@ -10,7 +13,7 @@ export class ExcelSqlQuery {
   private parser: any;
 
   constructor() {
-    this.parser = new Parser();
+    this.parser = new NodeSqlParser.Parser();
   }
 
   /**
@@ -205,10 +208,7 @@ export class ExcelSqlQuery {
       throw new Error('Unsupported SQL syntax: UNION operations are not supported');
     }
 
-    // Check JOIN operations
-    if (ast.from && ast.from.length > 1) {
-      throw new Error('Unsupported SQL syntax: Multi-table JOIN operations are not supported');
-    }
+    // JOIN operations are now supported
 
     // Check subqueries
     if (JSON.stringify(ast).includes('"type":"select"') && JSON.stringify(ast).match(/"type":"select"/g)!.length > 1) {
@@ -220,32 +220,49 @@ export class ExcelSqlQuery {
    * Execute SELECT query
    */
   private executeSelect(ast: any, worksheetData: Map<string, any[]>): any[] {
-    // Get table name
-    const tableName = ast.from[0].table;
-    const sheetData = worksheetData.get(tableName);
+    // Handle JOIN operations or single table
+    let result: any[];
+    let tableAliasMap: Map<string, string>;
     
-    if (!sheetData) {
-      throw new Error(`Worksheet "${tableName}" does not exist`);
-    }
+    if (ast.from.length === 1 && !ast.from[0].join) {
+      // Single table query
+      const fromClause = ast.from[0];
+      const tableName = fromClause.table;
+      const tableAlias = fromClause.as || tableName;
+      const sheetData = worksheetData.get(tableName);
+      
+      if (!sheetData) {
+        throw new Error(`Worksheet "${tableName}" does not exist`);
+      }
 
-    let result = [...sheetData];
+      result = [...sheetData];
+      
+      // Create table alias mapping for column resolution
+      tableAliasMap = new Map<string, string>();
+      tableAliasMap.set(tableAlias, tableName);
+    } else {
+      // JOIN operations
+      const joinResult = this.executeJoin(ast.from, worksheetData);
+      result = joinResult.data;
+      tableAliasMap = joinResult.tableAliasMap;
+    }
 
     // Apply WHERE conditions
     if (ast.where) {
-      result = this.applyWhereCondition(result, ast.where);
+      result = this.applyWhereCondition(result, ast.where, tableAliasMap);
     }
 
     // Apply GROUP BY
     if (ast.groupby && ast.groupby.length > 0) {
-      result = this.applyGroupBy(result, ast.groupby, ast.columns);
+      result = this.applyGroupBy(result, ast.groupby, ast.columns, tableAliasMap);
     } else {
       // Apply ORDER BY
       if (ast.orderby && ast.orderby.length > 0) {
-        result = this.applyOrderBy(result, ast.orderby);
+        result = this.applyOrderBy(result, ast.orderby, tableAliasMap);
       }
 
       // Apply SELECT field selection
-      result = this.applySelectFields(result, ast.columns);
+      result = this.applySelectFields(result, ast.columns, tableAliasMap);
 
       // Apply DISTINCT
       if (ast.distinct === 'DISTINCT') {
@@ -253,29 +270,132 @@ export class ExcelSqlQuery {
       }
 
       // Apply aggregate functions
-      result = this.applyAggregateFunction(result, ast.columns);
+      result = this.applyAggregateFunction(result, ast.columns, tableAliasMap);
     }
 
     return result;
   }
 
   /**
+   * Execute JOIN operations
+   */
+  private executeJoin(fromClauses: any[], worksheetData: Map<string, any[]>): { data: any[], tableAliasMap: Map<string, string> } {
+    const tableAliasMap = new Map<string, string>();
+    let result: any[] = [];
+    
+    // Start with the first table
+    const firstTable = fromClauses[0];
+    const firstTableName = firstTable.table;
+    const firstTableAlias = firstTable.as || firstTableName;
+    const firstTableData = worksheetData.get(firstTableName);
+    
+    if (!firstTableData) {
+      throw new Error(`Worksheet "${firstTableName}" does not exist`);
+    }
+    
+    tableAliasMap.set(firstTableAlias, firstTableName);
+    
+    // Add table prefix to all columns in the first table
+    result = firstTableData.map(row => {
+      const prefixedRow: any = {};
+      for (const [key, value] of Object.entries(row)) {
+        prefixedRow[`${firstTableAlias}.${key}`] = value;
+        // Also keep original column name for backward compatibility
+        prefixedRow[key] = value;
+      }
+      return prefixedRow;
+    });
+    
+    // Process JOIN operations
+    if (firstTable.join) {
+      for (const joinClause of firstTable.join) {
+        const rightTableName = joinClause.table;
+        const rightTableAlias = joinClause.as || rightTableName;
+        const rightTableData = worksheetData.get(rightTableName);
+        
+        if (!rightTableData) {
+          throw new Error(`Worksheet "${rightTableName}" does not exist`);
+        }
+        
+        tableAliasMap.set(rightTableAlias, rightTableName);
+        
+        // Perform the join
+        result = this.performJoin(result, rightTableData, joinClause, firstTableAlias, rightTableAlias, tableAliasMap);
+      }
+    }
+    
+    return { data: result, tableAliasMap };
+  }
+
+  /**
+   * Perform specific JOIN operation
+   */
+  private performJoin(
+    leftData: any[], 
+    rightData: any[], 
+    joinClause: any, 
+    leftAlias: string, 
+    rightAlias: string,
+    tableAliasMap: Map<string, string>
+  ): any[] {
+    const result: any[] = [];
+    const joinType = joinClause.join?.toUpperCase() || 'INNER';
+    
+    for (const leftRow of leftData) {
+      let hasMatch = false;
+      
+      for (const rightRow of rightData) {
+        // Add table prefix to right table columns
+        const prefixedRightRow: any = {};
+        for (const [key, value] of Object.entries(rightRow)) {
+          prefixedRightRow[`${rightAlias}.${key}`] = value;
+          // Also keep original column name for backward compatibility
+          prefixedRightRow[key] = value;
+        }
+        
+        // Evaluate JOIN condition
+        const combinedRow = { ...leftRow, ...prefixedRightRow };
+        
+        if (this.evaluateCondition(combinedRow, joinClause.on, tableAliasMap)) {
+          result.push(combinedRow);
+          hasMatch = true;
+        }
+      }
+      
+      // For LEFT JOIN, include unmatched left rows with null values for right table
+      if (!hasMatch && joinType === 'LEFT') {
+        const nullRightRow: any = {};
+        // Add null values for all right table columns
+        if (rightData.length > 0) {
+          for (const key of Object.keys(rightData[0])) {
+            nullRightRow[`${rightAlias}.${key}`] = null;
+            nullRightRow[key] = null;
+          }
+        }
+        result.push({ ...leftRow, ...nullRightRow });
+      }
+    }
+    
+    return result;
+  }
+
+  /**
    * Apply WHERE conditions
    */
-  private applyWhereCondition(data: any[], whereClause: any): any[] {
-    return data.filter(row => this.evaluateCondition(row, whereClause));
+  private applyWhereCondition(data: any[], whereClause: any, tableAliasMap?: Map<string, string>): any[] {
+    return data.filter(row => this.evaluateCondition(row, whereClause, tableAliasMap));
   }
 
   /**
    * Evaluate condition expression
    */
-  private evaluateCondition(row: any, condition: any): boolean {
+  private evaluateCondition(row: any, condition: any, tableAliasMap?: Map<string, string>): boolean {
     if (!condition) return true;
 
     switch (condition.type) {
       case 'binary_expr':
-        const left = this.getValueFromExpression(row, condition.left);
-        const right = this.getValueFromExpression(row, condition.right);
+        const left = this.getValueFromExpression(row, condition.left, tableAliasMap);
+        const right = this.getValueFromExpression(row, condition.right, tableAliasMap);
         
         switch (condition.operator) {
           case '=': return left == right;
@@ -285,13 +405,29 @@ export class ExcelSqlQuery {
           case '>=': return left >= right;
           case '<': return left < right;
           case '<=': return left <= right;
+          case 'IS': return left === right;
+          case 'IS NOT': return left !== right;
           case 'LIKE': 
             const pattern = right.toString().replace(/%/g, '.*').replace(/_/g, '.');
             return new RegExp(pattern, 'i').test(left.toString());
           case 'AND': 
-            return this.evaluateCondition(row, condition.left) && this.evaluateCondition(row, condition.right);
+            return this.evaluateCondition(row, condition.left, tableAliasMap) && this.evaluateCondition(row, condition.right, tableAliasMap);
           case 'OR': 
-            return this.evaluateCondition(row, condition.left) || this.evaluateCondition(row, condition.right);
+            return this.evaluateCondition(row, condition.left, tableAliasMap) || this.evaluateCondition(row, condition.right, tableAliasMap);
+          case 'IN':
+            // Handle IN operator: column IN (value1, value2, ...)
+            if (!condition.right || condition.right.type !== 'expr_list') {
+              throw new Error('IN operator requires a list of values');
+            }
+            const inValues = condition.right.value.map((expr: any) => this.getValueFromExpression(row, expr, tableAliasMap));
+            return inValues.includes(left);
+          case 'NOT IN':
+            // Handle NOT IN operator: column NOT IN (value1, value2, ...)
+            if (!condition.right || condition.right.type !== 'expr_list') {
+              throw new Error('NOT IN operator requires a list of values');
+            }
+            const notInValues = condition.right.value.map((expr: any) => this.getValueFromExpression(row, expr, tableAliasMap));
+            return !notInValues.includes(left);
           default:
             throw new Error(`Unsupported operator: ${condition.operator}`);
         }
@@ -302,19 +438,173 @@ export class ExcelSqlQuery {
         }
         throw new Error(`Unsupported unary operator: ${condition.operator}`);
       
+      case 'function':
+        // Handle function calls in conditions (e.g., LENGTH(column) > 0)
+        return this.evaluateFunction(row, condition, tableAliasMap);
+      
       default:
         throw new Error(`Unsupported condition type: ${condition.type}`);
     }
   }
 
   /**
+   * Evaluate function calls
+   */
+  private evaluateFunction(row: any, expr: any, tableAliasMap?: Map<string, string>): any {
+    // Extract function name from the complex structure
+    let funcName = '';
+    if (expr.name && expr.name.name && Array.isArray(expr.name.name) && expr.name.name.length > 0) {
+      funcName = expr.name.name[0].value.toUpperCase();
+    } else if (typeof expr.name === 'string') {
+      funcName = expr.name.toUpperCase();
+    } else {
+      throw new Error(`Invalid function name structure: ${JSON.stringify(expr.name)}`);
+    }
+    
+    // Note: Aggregate functions are handled separately in SELECT processing
+    // This function handles scalar functions only
+    
+    // Handle both old and new AST structures
+    const args = expr.args?.value || (expr.args?.expr ? [expr.args.expr] : []);
+    
+    // Get argument values
+    const argValues = args.map((arg: any) => this.getValueFromExpression(row, arg, tableAliasMap));
+    
+    switch (funcName) {
+      // String functions
+      case 'LENGTH':
+        if (argValues.length !== 1) throw new Error('LENGTH function requires exactly 1 argument');
+        return String(argValues[0] || '').length;
+        
+      case 'LOWER':
+        if (argValues.length !== 1) throw new Error('LOWER function requires exactly 1 argument');
+        return String(argValues[0] || '').toLowerCase();
+        
+      case 'UPPER':
+        if (args.length !== 1) throw new Error('UPPER function requires exactly 1 argument');
+        const upperValue = this.getValueFromExpression(row, args[0], tableAliasMap);
+        return String(upperValue).toUpperCase();
+      
+      case 'TRIM':
+        if (args.length !== 1) throw new Error('TRIM function requires exactly 1 argument');
+        const trimValue = this.getValueFromExpression(row, args[0], tableAliasMap);
+        return String(trimValue).trim();
+      
+      case 'LTRIM':
+        if (args.length !== 1) throw new Error('LTRIM function requires exactly 1 argument');
+        const ltrimValue = this.getValueFromExpression(row, args[0], tableAliasMap);
+        return String(ltrimValue).replace(/^\s+/, '');
+      
+      case 'RTRIM':
+        if (args.length !== 1) throw new Error('RTRIM function requires exactly 1 argument');
+        const rtrimValue = this.getValueFromExpression(row, args[0], tableAliasMap);
+        return String(rtrimValue).replace(/\s+$/, '');
+      
+      case 'SUBSTR':
+      case 'SUBSTRING':
+        if (args.length < 2 || args.length > 3) throw new Error('SUBSTR function requires 2 or 3 arguments');
+        const substrStr = String(this.getValueFromExpression(row, args[0], tableAliasMap));
+        const startPos = Number(this.getValueFromExpression(row, args[1], tableAliasMap)) - 1; // Convert to 0-based index
+        if (args.length === 3) {
+          const length = Number(this.getValueFromExpression(row, args[2], tableAliasMap));
+          return substrStr.substr(Math.max(0, startPos), length);
+        } else {
+          return substrStr.substr(Math.max(0, startPos));
+        }
+      
+      case 'INSTR':
+        if (args.length !== 2) throw new Error('INSTR function requires exactly 2 arguments');
+        const instrStr = String(this.getValueFromExpression(row, args[0], tableAliasMap));
+        const searchStr = String(this.getValueFromExpression(row, args[1], tableAliasMap));
+        const pos = instrStr.indexOf(searchStr);
+        return pos === -1 ? 0 : pos + 1; // Return 1-based index, 0 if not found
+      
+      case 'REPLACE':
+        if (args.length !== 3) throw new Error('REPLACE function requires exactly 3 arguments');
+        const replaceStr = String(this.getValueFromExpression(row, args[0], tableAliasMap));
+        const fromStr = String(this.getValueFromExpression(row, args[1], tableAliasMap));
+        const toStr = String(this.getValueFromExpression(row, args[2], tableAliasMap));
+        return replaceStr.replace(new RegExp(fromStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), toStr);
+        
+      // Math functions
+      case 'ABS':
+        if (argValues.length !== 1) throw new Error('ABS function requires exactly 1 argument');
+        return Math.abs(Number(argValues[0]));
+        
+      case 'ROUND':
+        if (argValues.length < 1 || argValues.length > 2) {
+          throw new Error('ROUND function requires 1 or 2 arguments');
+        }
+        const num = Number(argValues[0]);
+        const digits = argValues.length === 2 ? Number(argValues[1]) : 0;
+        return Math.round(num * Math.pow(10, digits)) / Math.pow(10, digits);
+        
+      case 'CEIL':
+      case 'CEILING':
+        if (argValues.length !== 1) throw new Error('CEIL function requires exactly 1 argument');
+        return Math.ceil(Number(argValues[0]));
+        
+      case 'FLOOR':
+        if (argValues.length !== 1) throw new Error('FLOOR function requires exactly 1 argument');
+        return Math.floor(Number(argValues[0]));
+        
+      case 'RANDOM':
+        if (argValues.length !== 0) throw new Error('RANDOM function requires no arguments');
+        // Return random integer in SQLite range
+        const min = -9223372036854775808;
+        const max = 9223372036854775807;
+        return Math.floor(Math.random() * (max - min + 1)) + min;
+        
+      // Aggregate functions - these should normally be handled at query level
+      // but we provide basic support for single-row contexts
+      case 'COUNT':
+        if (args.length === 0 || (args.length === 1 && args[0].type === 'star')) {
+          return 1; // COUNT(*) for single row
+        } else {
+          const value = this.getValueFromExpression(row, args[0], tableAliasMap);
+          return (value !== null && value !== undefined && value !== '') ? 1 : 0;
+        }
+        
+      case 'SUM':
+      case 'MAX':
+      case 'MIN':
+      case 'AVG':
+        if (argValues.length !== 1) throw new Error(`${funcName} function requires exactly 1 argument`);
+        return Number(argValues[0]) || 0;
+        
+      // Logical functions
+      case 'NOT':
+        if (argValues.length !== 1) throw new Error('NOT function requires exactly 1 argument');
+        return !argValues[0];
+        
+      default:
+        throw new Error(`Unsupported function: ${funcName}`);
+    }
+  }
+
+  /**
    * Get value from expression
    */
-  private getValueFromExpression(row: any, expr: any): any {
+  private getValueFromExpression(row: any, expr: any, tableAliasMap?: Map<string, string>): any {
     if (!expr) return null;
 
     switch (expr.type) {
       case 'column_ref':
+        // Handle table alias in column reference
+        if (expr.table && tableAliasMap) {
+          // If column has table prefix, resolve alias
+          const tableAlias = expr.table;
+          const columnName = expr.column;
+          
+          // Try prefixed column name first (for JOIN results)
+          const prefixedColumnName = `${tableAlias}.${columnName}`;
+          if (row.hasOwnProperty(prefixedColumnName)) {
+            return row[prefixedColumnName];
+          }
+          
+          // Fall back to original column name
+          return row[columnName];
+        }
         return row[expr.column];
       case 'number':
         return expr.value;
@@ -327,18 +617,63 @@ export class ExcelSqlQuery {
       case 'bool':
         return expr.value;
       case 'binary_expr':
-        const left = this.getValueFromExpression(row, expr.left);
-        const right = this.getValueFromExpression(row, expr.right);
+        const left = this.getValueFromExpression(row, expr.left, tableAliasMap);
+        const right = this.getValueFromExpression(row, expr.right, tableAliasMap);
         
         switch (expr.operator) {
+          // Arithmetic operators
           case '+': return Number(left) + Number(right);
           case '-': return Number(left) - Number(right);
           case '*': return Number(left) * Number(right);
           case '/': return Number(left) / Number(right);
           case '%': return Number(left) % Number(right);
+          
+          // Comparison operators (return boolean values)
+          case '=': return left == right;
+          case '!=': return left != right;
+          case '<>': return left != right;
+          case '>': return left > right;
+          case '>=': return left >= right;
+          case '<': return left < right;
+          case '<=': return left <= right;
+          case 'IS': return left === right;
+          case 'IS NOT': return left !== right;
+          case 'LIKE': 
+            const pattern = right.toString().replace(/%/g, '.*').replace(/_/g, '.');
+            return new RegExp(pattern, 'i').test(left.toString());
+          case 'AND': 
+            return left && right;
+          case 'OR': 
+            return left || right;
+          case 'IN':
+            if (expr.right.type !== 'expr_list') {
+              throw new Error('IN operator requires a list of values');
+            }
+            const inValues = this.getValueFromExpression(row, expr.right, tableAliasMap);
+            return inValues.includes(left);
+          case 'NOT IN':
+            if (expr.right.type !== 'expr_list') {
+              throw new Error('NOT IN operator requires a list of values');
+            }
+            const notInValues = this.getValueFromExpression(row, expr.right, tableAliasMap);
+            return !notInValues.includes(left);
+            
           default:
-            throw new Error(`Unsupported arithmetic operator: ${expr.operator}`);
+            throw new Error(`Unsupported operator: ${expr.operator}`);
         }
+      case 'function':
+        return this.evaluateFunction(row, expr, tableAliasMap);
+      case 'aggr_func':
+        // Aggregate functions should be handled at a higher level
+        // This is a fallback for cases where they appear in expressions
+        return this.evaluateFunction(row, expr, tableAliasMap);
+      case 'star':
+        // Star (*) is typically used in COUNT(*) and should be handled at aggregate level
+        // For expression evaluation, return a placeholder
+        return '*';
+      case 'expr_list':
+        // Handle expression lists (used in IN clauses)
+        return expr.value.map((item: any) => this.getValueFromExpression(row, item, tableAliasMap));
       default:
         throw new Error(`Unsupported expression type: ${expr.type}`);
     }
@@ -347,12 +682,15 @@ export class ExcelSqlQuery {
   /**
    * Apply GROUP BY
    */
-  private applyGroupBy(data: any[], groupBy: any[], columns: any[]): any[] {
+  private applyGroupBy(data: any[], groupByColumns: any[], selectColumns: any[], tableAliasMap?: Map<string, string>): any[] {
     // Group by grouping fields
     const groups = new Map<string, any[]>();
     
     for (const row of data) {
-      const groupKey = groupBy.map(gb => row[gb.column]).join('|');
+      const groupKey = groupByColumns.map(col => {
+        const columnName = col.column || col;
+        return this.getValueFromExpression(row, col.type === 'column_ref' ? col : { type: 'column_ref', column: columnName }, tableAliasMap);
+      }).join('|');
       if (!groups.has(groupKey)) {
         groups.set(groupKey, []);
       }
@@ -365,82 +703,100 @@ export class ExcelSqlQuery {
       const groupResult: any = {};
       
       // Add grouping fields
-      groupBy.forEach((gb, index) => {
-        groupResult[gb.column] = groupKey.split('|')[index];
+      groupByColumns.forEach((gb, index) => {
+        const columnName = gb.column || gb;
+        groupResult[columnName] = groupKey.split('|')[index];
       });
 
       // Process aggregate functions
-      for (const col of columns) {
+      for (const col of selectColumns) {
         if (col.expr && col.expr.type === 'aggr_func') {
           const funcName = col.expr.name.toUpperCase();
           const columnName = col.expr.args?.value?.[0]?.column || col.expr.args?.value?.[0]?.value;
           
           switch (funcName) {
             case 'COUNT':
-              if (columnName === '*') {
+              if (col.expr.args?.expr?.type === 'star') {
                 groupResult[col.as || `COUNT(*)`] = groupRows.length;
               } else {
-                const nonNullCount = groupRows.filter(row => 
-                  row[columnName] !== null && row[columnName] !== undefined && row[columnName] !== ''
-                ).length;
-                groupResult[col.as || `COUNT(${columnName})`] = nonNullCount;
+                const countArg = col.expr.args?.expr;
+                if (!countArg) {
+                  throw new Error('COUNT function requires exactly 1 argument');
+                }
+                const nonNullCount = groupRows.filter(row => {
+                  const val = this.getValueFromExpression(row, countArg, tableAliasMap);
+                  return val !== null && val !== undefined && val !== '';
+                }).length;
+                groupResult[col.as || `COUNT`] = nonNullCount;
               }
               break;
               
             case 'SUM':
-              if (!columnName) {
-                throw new Error('SUM function requires column name specification');
+              const sumArg = col.expr.args?.expr;
+              if (!sumArg) {
+                throw new Error('SUM function requires exactly 1 argument');
               }
               const sumValues = groupRows
-                .map(row => row[columnName])
-                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-                .map(val => Number(val));
-              groupResult[col.as || `SUM(${columnName})`] = sumValues.reduce((sum, val) => sum + val, 0);
+                .map(row => {
+                  const val = this.getValueFromExpression(row, sumArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
+              groupResult[col.as || `SUM`] = sumValues.reduce((sum, val) => sum + val, 0);
               break;
 
             case 'MAX':
-              if (!columnName) {
-                throw new Error('MAX function requires column name specification');
+              const maxArg = col.expr.args?.expr;
+              if (!maxArg) {
+                throw new Error('MAX function requires exactly 1 argument');
               }
               const maxValues = groupRows
-                .map(row => row[columnName])
-                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-                .map(val => Number(val));
+                .map(row => {
+                  const val = this.getValueFromExpression(row, maxArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
               if (maxValues.length === 0) {
-                groupResult[col.as || `MAX(${columnName})`] = null;
+                groupResult[col.as || `MAX`] = null;
               } else {
-                groupResult[col.as || `MAX(${columnName})`] = Math.max(...maxValues);
+                groupResult[col.as || `MAX`] = Math.max(...maxValues);
               }
               break;
 
             case 'MIN':
-              if (!columnName) {
-                throw new Error('MIN function requires column name specification');
+              const minArg = col.expr.args?.expr;
+              if (!minArg) {
+                throw new Error('MIN function requires exactly 1 argument');
               }
               const minValues = groupRows
-                .map(row => row[columnName])
-                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-                .map(val => Number(val));
+                .map(row => {
+                  const val = this.getValueFromExpression(row, minArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
               if (minValues.length === 0) {
-                groupResult[col.as || `MIN(${columnName})`] = null;
+                groupResult[col.as || `MIN`] = null;
               } else {
-                groupResult[col.as || `MIN(${columnName})`] = Math.min(...minValues);
+                groupResult[col.as || `MIN`] = Math.min(...minValues);
               }
               break;
 
             case 'AVG':
-              if (!columnName) {
-                throw new Error('AVG function requires column name specification');
+              const avgArg = col.expr.args?.expr;
+              if (!avgArg) {
+                throw new Error('AVG function requires exactly 1 argument');
               }
               const avgValues = groupRows
-                .map(row => row[columnName])
-                .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-                .map(val => Number(val));
+                .map(row => {
+                  const val = this.getValueFromExpression(row, avgArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
               if (avgValues.length === 0) {
-                groupResult[col.as || `AVG(${columnName})`] = null;
+                groupResult[col.as || `AVG`] = null;
               } else {
                 const sum = avgValues.reduce((sum, val) => sum + val, 0);
-                groupResult[col.as || `AVG(${columnName})`] = sum / avgValues.length;
+                groupResult[col.as || `AVG`] = sum / avgValues.length;
               }
               break;
               
@@ -462,12 +818,11 @@ export class ExcelSqlQuery {
   /**
    * Apply ORDER BY
    */
-  private applyOrderBy(data: any[], orderBy: any[]): any[] {
+  private applyOrderBy(data: any[], orderByColumns: any[], tableAliasMap?: Map<string, string>): any[] {
     return data.sort((a, b) => {
-      for (const order of orderBy) {
-        const columnName = order.expr.column;
-        const aVal = a[columnName];
-        const bVal = b[columnName];
+      for (const order of orderByColumns) {
+        const aVal = this.getValueFromExpression(a, order.expr, tableAliasMap);
+        const bVal = this.getValueFromExpression(b, order.expr, tableAliasMap);
         
         let comparison = 0;
         if (aVal < bVal) comparison = -1;
@@ -484,7 +839,7 @@ export class ExcelSqlQuery {
   /**
    * Apply SELECT field selection
    */
-  private applySelectFields(data: any[], columns: any[]): any[] {
+  private applySelectFields(data: any[], columns: any[], tableAliasMap?: Map<string, string>): any[] {
     if (columns.length === 1 && columns[0].expr.type === 'column_ref' && columns[0].expr.column === '*') {
       return data;
     }
@@ -494,11 +849,28 @@ export class ExcelSqlQuery {
       for (const col of columns) {
         if (col.expr.type === 'column_ref') {
           const columnName = col.expr.column;
-          const alias = col.as || columnName;
-          newRow[alias] = row[columnName];
+          const tableName = col.expr.table;
+          
+          // Handle table.* wildcard selection
+          if (columnName === '*' && tableName) {
+            // Add all columns from the specified table
+            for (const key in row) {
+              if (key.startsWith(tableName + '.')) {
+                const actualColumnName = key.substring(tableName.length + 1);
+                newRow[actualColumnName] = row[key];
+              }
+            }
+          } else {
+            const alias = col.as || columnName;
+            newRow[alias] = this.getValueFromExpression(row, col.expr, tableAliasMap);
+          }
         } else if (col.expr.type === 'number' || col.expr.type === 'string') {
           const alias = col.as || col.expr.value;
           newRow[alias] = col.expr.value;
+        } else {
+          // Handle other expression types (functions, binary expressions, etc.)
+          const alias = col.as || 'expr';
+          newRow[alias] = this.getValueFromExpression(row, col.expr, tableAliasMap);
         }
       }
       return newRow;
@@ -508,7 +880,7 @@ export class ExcelSqlQuery {
   /**
    * Apply aggregate functions (non-GROUP BY case)
    */
-  private applyAggregateFunction(data: any[], columns: any[]): any[] {
+  private applyAggregateFunction(data: any[], columns: any[], tableAliasMap?: Map<string, string>): any[] {
     const hasAggregateFunction = columns.some(col => col.expr && col.expr.type === 'aggr_func');
     
     if (!hasAggregateFunction) {
@@ -524,72 +896,89 @@ export class ExcelSqlQuery {
         
         switch (funcName) {
           case 'COUNT':
-            if (columnName === '*') {
+            if (col.expr.args?.expr?.type === 'star') {
               result[col.as || 'COUNT(*)'] = data.length;
             } else {
-              const nonNullCount = data.filter(row => 
-                row[columnName] !== null && row[columnName] !== undefined && row[columnName] !== ''
-              ).length;
-              result[col.as || `COUNT(${columnName})`] = nonNullCount;
+              const countArg = col.expr.args?.expr;
+              if (!countArg) {
+                throw new Error('COUNT function requires exactly 1 argument');
+              }
+              const nonNullCount = data.filter(row => {
+                const val = this.getValueFromExpression(row, countArg, tableAliasMap);
+                return val !== null && val !== undefined && val !== '';
+              }).length;
+              result[col.as || `COUNT`] = nonNullCount;
             }
             break;
             
           case 'SUM':
-            if (!columnName) {
-              throw new Error('SUM function requires column name specification');
-            }
-            const sumValues = data
-              .map(row => row[columnName])
-              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-              .map(val => Number(val));
-            result[col.as || `SUM(${columnName})`] = sumValues.reduce((sum, val) => sum + val, 0);
-            break;
+              const sumArg = col.expr.args?.expr;
+              if (!sumArg) {
+                throw new Error('SUM function requires exactly 1 argument');
+              }
+              const sumValues = data
+                .map(row => {
+                  const val = this.getValueFromExpression(row, sumArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
+              result[col.as || `SUM`] = sumValues.reduce((sum, val) => sum + val, 0);
+              break;
 
-          case 'MAX':
-            if (!columnName) {
-              throw new Error('MAX function requires column name specification');
-            }
-            const maxValues = data
-              .map(row => row[columnName])
-              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-              .map(val => Number(val));
-            if (maxValues.length === 0) {
-              result[col.as || `MAX(${columnName})`] = null;
-            } else {
-              result[col.as || `MAX(${columnName})`] = Math.max(...maxValues);
-            }
-            break;
+            case 'MAX':
+              const maxArg = col.expr.args?.expr;
+              if (!maxArg) {
+                throw new Error('MAX function requires exactly 1 argument');
+              }
+              const maxValues = data
+                .map(row => {
+                  const val = this.getValueFromExpression(row, maxArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
+              if (maxValues.length === 0) {
+                result[col.as || `MAX`] = null;
+              } else {
+                result[col.as || `MAX`] = Math.max(...maxValues);
+              }
+              break;
 
-          case 'MIN':
-            if (!columnName) {
-              throw new Error('MIN function requires column name specification');
-            }
-            const minValues = data
-              .map(row => row[columnName])
-              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-              .map(val => Number(val));
-            if (minValues.length === 0) {
-              result[col.as || `MIN(${columnName})`] = null;
-            } else {
-              result[col.as || `MIN(${columnName})`] = Math.min(...minValues);
-            }
-            break;
+            case 'MIN':
+              const minArg = col.expr.args?.expr;
+              if (!minArg) {
+                throw new Error('MIN function requires exactly 1 argument');
+              }
+              const minValues = data
+                .map(row => {
+                  const val = this.getValueFromExpression(row, minArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
+              if (minValues.length === 0) {
+                result[col.as || `MIN`] = null;
+              } else {
+                result[col.as || `MIN`] = Math.min(...minValues);
+              }
+              break;
 
-          case 'AVG':
-            if (!columnName) {
-              throw new Error('AVG function requires column name specification');
-            }
-            const avgValues = data
-              .map(row => row[columnName])
-              .filter(val => val !== null && val !== undefined && val !== '' && !isNaN(Number(val)))
-              .map(val => Number(val));
-            if (avgValues.length === 0) {
-              result[col.as || `AVG(${columnName})`] = null;
-            } else {
-              const sum = avgValues.reduce((sum, val) => sum + val, 0);
-              result[col.as || `AVG(${columnName})`] = sum / avgValues.length;
-            }
-            break;
+            case 'AVG':
+              const avgArg = col.expr.args?.expr;
+              if (!avgArg) {
+                throw new Error('AVG function requires exactly 1 argument');
+              }
+              const avgValues = data
+                .map(row => {
+                  const val = this.getValueFromExpression(row, avgArg, tableAliasMap);
+                  return Number(val);
+                })
+                .filter(val => !isNaN(val));
+              if (avgValues.length === 0) {
+                result[col.as || `AVG`] = null;
+              } else {
+                const sum = avgValues.reduce((sum, val) => sum + val, 0);
+                result[col.as || `AVG`] = sum / avgValues.length;
+              }
+              break;
             
           case 'DISTINCT':
             if (!columnName) {

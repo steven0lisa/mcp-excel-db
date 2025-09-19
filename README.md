@@ -153,6 +153,62 @@ GROUP BY category
 ORDER BY total_quantity DESC;
 ```
 
+### IN and NOT IN Operations
+```sql
+-- Filter by multiple values
+SELECT * FROM products WHERE category IN ('Electronics', 'Books', 'Clothing');
+
+-- Exclude multiple values
+SELECT * FROM employees WHERE department NOT IN ('HR', 'Finance');
+
+-- Complex conditions with IN
+SELECT name, price FROM products 
+WHERE category IN ('A', 'B') AND price > 100;
+```
+
+### Table Aliases
+```sql
+SELECT a.name, a.price FROM Sheet1 AS a WHERE a.price > 10;
+```
+
+### JOIN Operations
+```sql
+-- LEFT JOIN between worksheets
+SELECT a.name, a.price, b.supplier 
+FROM Sheet1 AS a 
+LEFT JOIN Sheet2 AS b ON a.id = b.sheet1_id;
+
+-- INNER JOIN between worksheets
+SELECT a.*, b.rating 
+FROM products AS a 
+INNER JOIN suppliers AS b ON a.supplier_id = b.id;
+```
+
+### String Functions
+```sql
+-- String manipulation functions
+SELECT 
+  LENGTH(name) as name_length,
+  UPPER(category) as upper_category,
+  LOWER(description) as lower_desc,
+  TRIM(notes) as clean_notes,
+  SUBSTR(name, 1, 3) as name_prefix,
+  REPLACE(description, 'old', 'new') as updated_desc
+FROM products;
+```
+
+### Math Functions
+```sql
+-- Mathematical operations
+SELECT 
+  ABS(profit) as absolute_profit,
+  ROUND(price, 2) as rounded_price,
+  CEIL(rating) as ceiling_rating,
+  FLOOR(discount) as floor_discount,
+  RANDOM() as random_number
+FROM products;
+```
+
 ### Getting Table Structure
 ```sql
 DESCRIBE Sheet1;
@@ -172,6 +228,34 @@ DESCRIBE Sheet1;
 - Pattern matching (`LIKE` with `%` wildcards)
 - Logical operators (`AND`, `OR`, `NOT`)
 - NULL checks (`IS NULL`, `IS NOT NULL`)
+- List membership (`IN`, `NOT IN`) - Check if value exists in a list of values
+
+### Table Aliases
+- Table aliases (`FROM Sheet1 AS a`)
+- Column references with aliases (`a.column_name`)
+
+### JOIN Operations
+- `LEFT JOIN` - Left outer join between worksheets
+- `INNER JOIN` - Inner join between worksheets
+- Join conditions with `ON` clause
+
+### String Functions
+- `LENGTH(str)` - Get string length
+- `UPPER(str)` - Convert to uppercase
+- `LOWER(str)` - Convert to lowercase
+- `TRIM(str)` - Remove leading and trailing spaces
+- `LTRIM(str)` - Remove leading spaces
+- `RTRIM(str)` - Remove trailing spaces
+- `SUBSTR(str, start, length)` - Extract substring (1-based indexing)
+- `INSTR(str, substr)` - Find substring position (1-based, returns 0 if not found)
+- `REPLACE(str, from_str, to_str)` - Replace substring
+
+### Math Functions
+- `ABS(x)` - Absolute value
+- `ROUND(x, d)` - Round to d decimal places
+- `CEIL(x)` / `CEILING(x)` - Round up to nearest integer
+- `FLOOR(x)` - Round down to nearest integer
+- `RANDOM()` - Generate random integer
 
 ### Aggregation Functions
 - `COUNT(*)` - Count all rows
@@ -190,10 +274,10 @@ DESCRIBE Sheet1;
 ## 🚫 Limitations
 
 - Only SELECT queries are supported (no INSERT, UPDATE, DELETE)
-- No JOIN operations between worksheets
 - No subqueries
 - No HAVING clauses
 - No UNION operations
+- Limited comparison operators (supports `=`, `!=`, `<`, `<=`, but not `>`, `>=`, `IS NOT`)
 - Each query requires specifying the file path (no persistent file loading)
 - For large files (>5MB), row counts are estimated using sampling for performance
 
