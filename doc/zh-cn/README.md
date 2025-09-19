@@ -90,12 +90,12 @@ MCP 服务器提供以下工具：
 ```
 
 #### 3. `get_worksheet_info`
-获取已加载 Excel 文件中所有工作表的信息。
+获取已加载 Excel 文件中所有工作表的基本信息（轻量级操作）。
 
 **返回：**
-- 工作表名称
-- 行数
-- 列信息
+- 工作表名称列表
+
+**注意：** 为了性能考虑，此方法不返回行数信息。如需获取具体行数，请使用 SQL 查询：`SELECT COUNT(*) FROM SheetName`
 
 #### 4. `get_worksheet_columns`
 获取指定工作表的列名。
@@ -270,9 +270,21 @@ npm run build
 
 ### 运行测试
 
+本项目有两种类型的测试：
+
+#### 单元测试（Jest）
+运行核心功能的 Jest 单元测试：
 ```bash
 npm test
 ```
+
+#### 特性测试
+运行所有 SQL 功能的综合特性测试：
+```bash
+npm run test:features
+```
+
+特性测试验证所有已实现的 SQL 功能，包括 WHERE 条件、JOIN 操作、字符串函数、数学函数等。每个特性在 `test/test-case/` 目录中都有对应的测试套件。
 
 ### 开发模式
 

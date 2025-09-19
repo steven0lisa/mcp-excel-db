@@ -1,9 +1,8 @@
 import ExcelJS from 'exceljs';
-import { createRequire } from 'module';
+import * as fs from 'fs';
 import * as path from 'path';
-
-const require = createRequire(import.meta.url);
-const NodeSqlParser = require('node-sql-parser');
+import pkg from 'node-sql-parser';
+const { Parser: NodeSqlParser } = pkg;
 
 /**
  * Excel SQL Query Tool Class
@@ -13,7 +12,7 @@ export class ExcelSqlQuery {
   private parser: any;
 
   constructor() {
-    this.parser = new NodeSqlParser.Parser();
+    this.parser = new NodeSqlParser();
   }
 
   /**
@@ -21,7 +20,7 @@ export class ExcelSqlQuery {
    */
   private async preloadWorksheetData(workbook: ExcelJS.Workbook, filePath: string): Promise<Map<string, any[]>> {
     const worksheetData: Map<string, any[]> = new Map();
-    const fs = require('fs');
+    // fs is already imported at the top
     const stats = fs.statSync(filePath);
     const fileSizeInMB = stats.size / (1024 * 1024);
     
@@ -129,7 +128,7 @@ export class ExcelSqlQuery {
     try {
       // Load Excel file
       const workbook = new ExcelJS.Workbook();
-      const stream = require('fs').createReadStream(filePath);
+      const stream = fs.createReadStream(filePath);
       await workbook.xlsx.read(stream);
       
       // Preload all worksheet data into memory
@@ -155,28 +154,26 @@ export class ExcelSqlQuery {
   }
 
   /**
-   * Get worksheet information
+   * Get worksheet information (lightweight version - only returns worksheet names)
+   * For row count information, use SQL query: SELECT COUNT(*) FROM SheetName
    */
-  async getWorksheetInfo(filePath: string): Promise<Array<{table_name: string, row_count: number}>> {
+  async getWorksheetInfo(filePath: string): Promise<Array<{table_name: string}>> {
     try {
       // Load Excel file
       const workbook = new ExcelJS.Workbook();
-      const stream = require('fs').createReadStream(filePath);
+      const stream = fs.createReadStream(filePath);
       await workbook.xlsx.read(stream);
-      
-      // Preload all worksheet data into memory
-      const worksheetData = await this.preloadWorksheetData(workbook, filePath);
       
       console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
       
-      const tables: Array<{table_name: string, row_count: number}> = [];
+      const tables: Array<{table_name: string}> = [];
       
-      for (const [sheetName, data] of worksheetData) {
+      // Only get worksheet names without loading data
+      workbook.eachSheet((worksheet: any) => {
         tables.push({
-          table_name: sheetName,
-          row_count: data.length
+          table_name: worksheet.name
         });
-      }
+      });
       
       return tables;
       
@@ -186,6 +183,78 @@ export class ExcelSqlQuery {
       }
       throw new Error(`Failed to get worksheet information: ${error}`);
     }
+  }
+
+  /**
+   * Get worksheet columns information (lightweight version - only reads first row)
+   */
+  async getWorksheetColumns(filePath: string, worksheetName?: string): Promise<Array<{table_name: string, columns: string[]}>> {
+    try {
+      // Load Excel file
+      const workbook = new ExcelJS.Workbook();
+      const stream = fs.createReadStream(filePath);
+      await workbook.xlsx.read(stream);
+      
+      console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
+      
+      const result: Array<{table_name: string, columns: string[]}> = [];
+      
+      // If specific worksheet is requested
+      if (worksheetName) {
+        const worksheet = workbook.getWorksheet(worksheetName);
+        if (!worksheet) {
+          throw new Error(`Worksheet "${worksheetName}" does not exist`);
+        }
+        
+        const columns = this.extractColumnsFromWorksheet(worksheet);
+        result.push({
+          table_name: worksheetName,
+          columns: columns
+        });
+      } else {
+        // Get columns for all worksheets
+        workbook.eachSheet((worksheet: any) => {
+          const columns = this.extractColumnsFromWorksheet(worksheet);
+          result.push({
+            table_name: worksheet.name,
+            columns: columns
+          });
+        });
+      }
+      
+      return result;
+      
+    } catch (error) {
+      if (error instanceof Error) {
+        throw new Error(`Failed to get worksheet columns: ${error.message}`);
+      }
+      throw new Error(`Failed to get worksheet columns: ${error}`);
+    }
+  }
+
+  /**
+   * Extract column names from worksheet (only reads first row)
+   */
+  private extractColumnsFromWorksheet(worksheet: any): string[] {
+    const columns: string[] = [];
+    
+    try {
+      // Get headers from first row only
+      const headerRow = worksheet.getRow(1);
+      const maxCols = headerRow.cellCount;
+      
+      for (let colNumber = 1; colNumber <= maxCols; colNumber++) {
+        const cell = headerRow.getCell(colNumber);
+        const columnName = cell.value?.toString() || `Column${colNumber}`;
+        columns.push(columnName);
+      }
+      
+      console.log(`📋 Worksheet "${worksheet.name}" columns:`, columns);
+    } catch (error) {
+      console.error(`❌ Error extracting columns from worksheet "${worksheet.name}":`, error);
+    }
+    
+    return columns;
   }
 
   /**

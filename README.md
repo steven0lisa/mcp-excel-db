@@ -98,14 +98,13 @@ Execute SQL queries on Excel files. Each query requires specifying the file path
 - Example: `DESCRIBE Sheet1` returns column names and data types
 
 #### 2. `get_worksheet_info`
-Get information about all worksheets in an Excel file.
+Get basic information about all worksheets in an Excel file (lightweight operation).
 
 **Parameters:**
 - `filePath` (string): Path to the Excel file (.xlsx or .xls)
 
 **Returns:**
-- Worksheet names
-- Row counts for each worksheet
+- List of worksheet names
 
 **Example:**
 ```json
@@ -114,11 +113,25 @@ Get information about all worksheets in an Excel file.
 }
 ```
 
-**Performance Optimization:**
-For large Excel files (>5MB), the system uses a sampling algorithm to estimate row counts:
-- Samples every 100 rows to detect data presence
-- Continues sampling until no data is found
-- Provides fast estimation for very large datasets
+**Note:** For performance reasons, this method does not return row count information. To get the specific row count, use SQL query: `SELECT COUNT(*) FROM SheetName`
+
+#### 3. `get_worksheet_columns`
+Get column information for worksheets in an Excel file (lightweight operation).
+
+**Parameters:**
+- `filePath` (string): Path to the Excel file (.xlsx or .xls)
+- `worksheetName` (string, optional): Specific worksheet name to get columns for
+
+**Returns:**
+- Worksheet names and their column lists
+
+**Example:**
+```json
+{
+  "filePath": "/path/to/your/spreadsheet.xlsx",
+  "worksheetName": "Sheet1"
+}
+```
 
 ## 📊 SQL Query Examples
 
@@ -294,9 +307,21 @@ npm run build
 
 ### Running Tests
 
+This project has two types of tests:
+
+#### Unit Tests (Jest)
+Run Jest unit tests for core functionality:
 ```bash
 npm test
 ```
+
+#### Feature Tests
+Run comprehensive feature tests for all SQL functionality:
+```bash
+npm run test:features
+```
+
+The feature tests validate all implemented SQL features including WHERE conditions, JOIN operations, string functions, math functions, and more. Each feature has its own test suite in the `test/test-case/` directory.
 
 ### Development Mode
 

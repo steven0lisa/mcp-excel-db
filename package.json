@@ -17,6 +17,7 @@
     "start": "node dist/mcp-server.js",
     "dev": "ts-node src/mcp-server.ts",
     "test": "jest",
+    "test:features": "node test/test.js",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "prepublishOnly": "npm run build",

@@ -1,6 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { ExcelSqlQuery } from '../../dist/src/excel-sql-query.js';
+import { ExcelSqlQuery } from '../../src/excel-sql-query.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
