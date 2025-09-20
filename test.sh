@@ -4,7 +4,32 @@
 
 echo "🧪 Running tests and updating badges..."
 
-# Run tests with coverage
+# First run feature tests
+echo "🚀 Running feature tests..."
+npm run test:features > features_output.tmp 2>&1
+FEATURES_EXIT_CODE=$?
+
+if [ $FEATURES_EXIT_CODE -ne 0 ]; then
+    echo "❌ Feature tests failed!"
+    cat features_output.tmp
+    rm -f features_output.tmp
+    exit 1
+fi
+
+# Extract feature test results
+FEATURE_TOTAL=$(grep "Total Tests:" features_output.tmp | grep -o "[0-9]\+" | head -1 || echo "0")
+FEATURE_PASSED=$(grep "✅ Passed:" features_output.tmp | grep -o "[0-9]\+" | head -1 || echo "0")
+FEATURE_FAILED=$(grep "❌ Failed:" features_output.tmp | grep -o "[0-9]\+" | head -1 || echo "0")
+
+echo "✅ Feature Test Results:"
+echo "   - Total: $FEATURE_TOTAL"
+echo "   - Passed: $FEATURE_PASSED"
+echo "   - Failed: $FEATURE_FAILED"
+
+# Clean up feature test output
+rm -f features_output.tmp
+
+# Then run tests with coverage
 echo "📊 Running tests with coverage..."
 npm run test:coverage > test_output.tmp 2>&1
 TEST_EXIT_CODE=$?
@@ -24,13 +49,19 @@ if [ $TEST_EXIT_CODE -ne 0 ]; then
 fi
 
 # Extract test results
-PASSED_TESTS=$(grep -o "[0-9]* passed" test_output.tmp | tail -1 | grep -o "[0-9]*" || echo "0")
-TOTAL_TESTS=$(grep -o "Tests:.*[0-9]* total" test_output.tmp | grep -o "[0-9]* total" | grep -o "[0-9]*" || echo "0")
+JEST_PASSED=$(grep -o "[0-9]* passed" test_output.tmp | tail -1 | grep -o "[0-9]*" || echo "0")
+JEST_TOTAL=$(grep -o "Tests:.*[0-9]* total" test_output.tmp | grep -o "[0-9]* total" | grep -o "[0-9]*" || echo "0")
 COVERAGE=$(grep -o "[0-9]*\.[0-9]*%" test_output.tmp | head -1 || echo "0%")
 
-echo "✅ Test Results:"
-echo "   - Passed: $PASSED_TESTS"
-echo "   - Total: $TOTAL_TESTS" 
+# Calculate combined test results
+TOTAL_TESTS=$((FEATURE_TOTAL + JEST_TOTAL))
+PASSED_TESTS=$((FEATURE_PASSED + JEST_PASSED))
+
+echo "✅ Combined Test Results:"
+echo "   - Feature Tests: $FEATURE_PASSED/$FEATURE_TOTAL passed"
+echo "   - Jest Tests: $JEST_PASSED/$JEST_TOTAL passed"
+echo "   - Total Passed: $PASSED_TESTS"
+echo "   - Total Tests: $TOTAL_TESTS" 
 echo "   - Coverage: $COVERAGE"
 
 # Clean up temp file
