@@ -89,6 +89,7 @@ else
     git push origin $(git branch --show-current) || echo "Push failed, please push manually"
 fi
 
+
 # 6. Create and push git tag
 echo "🏷️  Creating and pushing tag..."
 TAG_NAME="v$NEW_VERSION"
@@ -110,12 +111,14 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "✅ Tag $TAG_NAME created and pushed successfully"
+echo "🚀 GitHub Actions will automatically create a GitHub Release"
 
 echo ""
 echo "🎉 Publishing process completed!"
 echo "📦 New version: $NEW_VERSION"
 echo "🏷️  Tag: $TAG_NAME"
 echo "📤 Published to: https://registry.npmjs.com"
+echo "🔗 GitHub Release will be created automatically at: https://github.com/steven0lisa/mcp-excel-db/releases"
 echo ""
 echo "You can install the new version with:"
 echo "npm install @zhangzichao2008/mcp-excel-db@$NEW_VERSION"

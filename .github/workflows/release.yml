@@ -1,0 +1,147 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0, v1.2.3, etc.
+
+permissions:
+  contents: write  # Required for creating releases
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for changelog generation
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+      
+      - name: Run tests
+        run: npm run test:features
+      
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get current tag
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          
+          # Get the previous tag (excluding the current one)
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^$CURRENT_TAG$" | head -n 1)
+          
+          echo "Current tag: $CURRENT_TAG"
+          echo "Previous tag: $PREV_TAG"
+          
+          if [ -n "$PREV_TAG" ]; then
+            echo "## 🔄 Changes since $PREV_TAG" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            
+            # Get commit messages between tags
+            COMMITS=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..$CURRENT_TAG)
+            
+            if [ -n "$COMMITS" ]; then
+              echo "$COMMITS" >> CHANGELOG.md
+            else
+              echo "- No significant changes" >> CHANGELOG.md
+            fi
+            
+            echo "" >> CHANGELOG.md
+            echo "### 📊 Statistics" >> CHANGELOG.md
+            COMMIT_COUNT=$(git rev-list --count $PREV_TAG..$CURRENT_TAG)
+            FILES_CHANGED=$(git diff --name-only $PREV_TAG..$CURRENT_TAG | wc -l)
+            echo "- **Commits**: $COMMIT_COUNT" >> CHANGELOG.md
+            echo "- **Files changed**: $FILES_CHANGED" >> CHANGELOG.md
+            
+            # Show file changes summary
+            echo "" >> CHANGELOG.md
+            echo "### 📁 Modified Files" >> CHANGELOG.md
+            git diff --name-status $PREV_TAG..$CURRENT_TAG | while read status file; do
+              case $status in
+                A) echo "- ➕ Added: \`$file\`" >> CHANGELOG.md ;;
+                M) echo "- ✏️ Modified: \`$file\`" >> CHANGELOG.md ;;
+                D) echo "- ❌ Deleted: \`$file\`" >> CHANGELOG.md ;;
+                R*) echo "- 🔄 Renamed: \`$file\`" >> CHANGELOG.md ;;
+              esac
+            done
+            
+          else
+            echo "## 🎉 Initial Release" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "This is the first release of MCP Excel DB." >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "### 🚀 Initial Features" >> CHANGELOG.md
+            echo "- SQL querying of Excel files" >> CHANGELOG.md
+            echo "- Support for complex WHERE conditions" >> CHANGELOG.md
+            echo "- JOIN operations between worksheets" >> CHANGELOG.md
+            echo "- Aggregation functions (COUNT, SUM, AVG, MAX, MIN)" >> CHANGELOG.md
+            echo "- IN/NOT IN expressions" >> CHANGELOG.md
+            echo "- Performance optimizations for large files" >> CHANGELOG.md
+          fi
+          
+          # Set multiline output
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          cat CHANGELOG.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Release ${{ steps.version.outputs.tag }}
+          body: |
+            # MCP Excel DB ${{ steps.version.outputs.version }}
+            
+            A Model Context Protocol (MCP) server that enables SQL querying of Excel files.
+            
+            ## 📦 Installation
+            
+            ```bash
+            npm install @zhangzichao2008/mcp-excel-db@${{ steps.version.outputs.version }}
+            ```
+            
+            ## 🚀 Features
+            
+            - SQL querying of Excel files
+            - Support for complex WHERE conditions
+            - JOIN operations between worksheets
+            - Aggregation functions (COUNT, SUM, AVG, MAX, MIN)
+            - IN/NOT IN expressions
+            - Performance optimizations for large files
+            
+            ## 📋 Test Results
+            
+            ✅ All feature tests passed  
+            ✅ Build successful  
+            ✅ Ready for production use
+            
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ## 📚 Documentation
+            
+            - [English README](https://github.com/steven0lisa/mcp-excel-db/blob/main/README.md)
+            - [中文文档](https://github.com/steven0lisa/mcp-excel-db/blob/main/doc/zh-cn/README.md)
+            - [Feature Documentation](https://github.com/steven0lisa/mcp-excel-db/tree/main/doc/feature)
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

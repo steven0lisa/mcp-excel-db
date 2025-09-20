@@ -165,6 +165,11 @@ LEFT JOIN Sheet2 AS b ON a.id = b.sheet1_id;
 SELECT a.*, b.rating 
 FROM products AS a 
 INNER JOIN suppliers AS b ON a.supplier_id = b.id;
+
+-- 工作表间的 CROSS JOIN（笛卡尔积）
+SELECT a.name, b.category 
+FROM Sheet1 AS a 
+CROSS JOIN Sheet2 AS b;
 ```
 
 ### 字符串函数
@@ -213,6 +218,9 @@ FROM products;
 ### JOIN 操作
 - `LEFT JOIN` - 工作表间的左外连接
 - `INNER JOIN` - 工作表间的内连接
+- `RIGHT JOIN` - 工作表间的右外连接
+- `FULL OUTER JOIN` - 工作表间的全外连接
+- `CROSS JOIN` - 工作表间的笛卡尔积
 - 使用 `ON` 子句的连接条件
 
 ### 字符串函数

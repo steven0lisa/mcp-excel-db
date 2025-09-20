@@ -11,8 +11,8 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-14%2F74%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
-[![Coverage](https://img.shields.io/badge/Coverage-19.68%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-14%2F80%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-17.51%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
@@ -195,6 +195,11 @@ LEFT JOIN Sheet2 AS b ON a.id = b.sheet1_id;
 SELECT a.*, b.rating 
 FROM products AS a 
 INNER JOIN suppliers AS b ON a.supplier_id = b.id;
+
+-- CROSS JOIN between worksheets (Cartesian product)
+SELECT a.name, b.category 
+FROM Sheet1 AS a 
+CROSS JOIN Sheet2 AS b;
 ```
 
 ### String Functions
@@ -250,6 +255,9 @@ DESCRIBE Sheet1;
 ### JOIN Operations
 - `LEFT JOIN` - Left outer join between worksheets
 - `INNER JOIN` - Inner join between worksheets
+- `RIGHT JOIN` - Right outer join between worksheets
+- `FULL OUTER JOIN` - Full outer join between worksheets
+- `CROSS JOIN` - Cartesian product between worksheets
 - Join conditions with `ON` clause
 
 ### String Functions

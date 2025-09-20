@@ -375,22 +375,21 @@ export class ExcelSqlQuery {
       return prefixedRow;
     });
     
-    // Process JOIN operations
-    if (firstTable.join) {
-      for (const joinClause of firstTable.join) {
-        const rightTableName = joinClause.table;
-        const rightTableAlias = joinClause.as || rightTableName;
-        const rightTableData = worksheetData.get(rightTableName);
-        
-        if (!rightTableData) {
-          throw new Error(`Worksheet "${rightTableName}" does not exist`);
-        }
-        
-        tableAliasMap.set(rightTableAlias, rightTableName);
-        
-        // Perform the join
-        result = this.performJoin(result, rightTableData, joinClause, firstTableAlias, rightTableAlias, tableAliasMap);
+    // Process JOIN operations - check all tables for join clauses
+    for (let i = 1; i < fromClauses.length; i++) {
+      const joinTable = fromClauses[i];
+      const rightTableName = joinTable.table;
+      const rightTableAlias = joinTable.as || rightTableName;
+      const rightTableData = worksheetData.get(rightTableName);
+      
+      if (!rightTableData) {
+        throw new Error(`Worksheet "${rightTableName}" does not exist`);
       }
+      
+      tableAliasMap.set(rightTableAlias, rightTableName);
+      
+      // Perform the join
+      result = this.performJoin(result, rightTableData, joinTable, firstTableAlias, rightTableAlias, tableAliasMap);
     }
     
     return { data: result, tableAliasMap };
@@ -410,39 +409,176 @@ export class ExcelSqlQuery {
     const result: any[] = [];
     const joinType = joinClause.join?.toUpperCase() || 'INNER';
     
-    for (const leftRow of leftData) {
-      let hasMatch = false;
-      
-      for (const rightRow of rightData) {
-        // Add table prefix to right table columns
-        const prefixedRightRow: any = {};
-        for (const [key, value] of Object.entries(rightRow)) {
-          prefixedRightRow[`${rightAlias}.${key}`] = value;
-          // Also keep original column name for backward compatibility
-          prefixedRightRow[key] = value;
-        }
-        
-        // Evaluate JOIN condition
-        const combinedRow = { ...leftRow, ...prefixedRightRow };
-        
-        if (this.evaluateCondition(combinedRow, joinClause.on, tableAliasMap)) {
+    // Handle CROSS JOIN - return Cartesian product of both tables
+    if (joinType === 'CROSS JOIN') {
+      for (const leftRow of leftData) {
+        for (const rightRow of rightData) {
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            // Also keep original column name for backward compatibility
+            prefixedRightRow[key] = value;
+          }
+          
+          // Combine left and right rows (Cartesian product)
+          const combinedRow = { ...leftRow, ...prefixedRightRow };
           result.push(combinedRow);
-          hasMatch = true;
         }
       }
-      
-      // For LEFT JOIN, include unmatched left rows with null values for right table
-      if (!hasMatch && joinType === 'LEFT') {
-        const nullRightRow: any = {};
-        // Add null values for all right table columns
-        if (rightData.length > 0) {
-          for (const key of Object.keys(rightData[0])) {
-            nullRightRow[`${rightAlias}.${key}`] = null;
-            nullRightRow[key] = null;
+      return result;
+    }
+    
+    // For INNER JOIN and LEFT JOIN, use the existing logic
+    if (joinType === 'INNER' || joinType === 'LEFT') {
+      for (const leftRow of leftData) {
+        let hasMatch = false;
+        
+        for (const rightRow of rightData) {
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            // Also keep original column name for backward compatibility
+            prefixedRightRow[key] = value;
+          }
+          
+          // Evaluate JOIN condition
+          const combinedRow = { ...leftRow, ...prefixedRightRow };
+          
+          if (this.evaluateCondition(combinedRow, joinClause.on, tableAliasMap)) {
+            result.push(combinedRow);
+            hasMatch = true;
           }
         }
-        result.push({ ...leftRow, ...nullRightRow });
+        
+        // For LEFT JOIN, include unmatched left rows with null values for right table
+        if (!hasMatch && joinType === 'LEFT') {
+          const nullRightRow: any = {};
+          // Add null values for all right table columns
+          if (rightData.length > 0) {
+            for (const key of Object.keys(rightData[0])) {
+              nullRightRow[`${rightAlias}.${key}`] = null;
+              nullRightRow[key] = null;
+            }
+          }
+          result.push({ ...leftRow, ...nullRightRow });
+        }
       }
+    } else if (joinType === 'RIGHT') {
+      // For RIGHT JOIN, reverse the logic and include unmatched right rows
+      for (const rightRow of rightData) {
+        let hasMatch = false;
+        
+        for (const leftRow of leftData) {
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            prefixedRightRow[key] = value;
+          }
+          
+          // Evaluate JOIN condition
+          const combinedRow = { ...leftRow, ...prefixedRightRow };
+          
+          if (this.evaluateCondition(combinedRow, joinClause.on, tableAliasMap)) {
+            result.push(combinedRow);
+            hasMatch = true;
+          }
+        }
+        
+        // For RIGHT JOIN, include unmatched right rows with null values for left table
+        if (!hasMatch) {
+          const nullLeftRow: any = {};
+          // Add null values for all left table columns
+          if (leftData.length > 0) {
+            for (const key of Object.keys(leftData[0])) {
+              nullLeftRow[`${leftAlias}.${key}`] = null;
+              nullLeftRow[key] = null;
+            }
+          }
+          
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            prefixedRightRow[key] = value;
+          }
+          
+          result.push({ ...nullLeftRow, ...prefixedRightRow });
+        }
+      }
+    } else if (joinType === 'FULL OUTER') {
+      // For FULL OUTER JOIN, we need to handle both matched and unmatched rows from both sides
+      const matchedLeftRows = new Set<number>();
+      const matchedRightRows = new Set<number>();
+      
+      // First, process all matches
+      for (let leftIndex = 0; leftIndex < leftData.length; leftIndex++) {
+        const leftRow = leftData[leftIndex];
+        let hasMatch = false;
+        
+        for (let rightIndex = 0; rightIndex < rightData.length; rightIndex++) {
+          const rightRow = rightData[rightIndex];
+          
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            prefixedRightRow[key] = value;
+          }
+          
+          // Evaluate JOIN condition
+          const combinedRow = { ...leftRow, ...prefixedRightRow };
+          
+          if (this.evaluateCondition(combinedRow, joinClause.on, tableAliasMap)) {
+            result.push(combinedRow);
+            hasMatch = true;
+            matchedLeftRows.add(leftIndex);
+            matchedRightRows.add(rightIndex);
+          }
+        }
+        
+        if (!hasMatch) {
+          // Unmatched left row - include with null right columns
+          const nullRightRow: any = {};
+          if (rightData.length > 0) {
+            for (const key of Object.keys(rightData[0])) {
+              nullRightRow[`${rightAlias}.${key}`] = null;
+              nullRightRow[key] = null;
+            }
+          }
+          result.push({ ...leftRow, ...nullRightRow });
+          matchedLeftRows.add(leftIndex);
+        }
+      }
+      
+      // Now add unmatched right rows
+      for (let rightIndex = 0; rightIndex < rightData.length; rightIndex++) {
+        if (!matchedRightRows.has(rightIndex)) {
+          const rightRow = rightData[rightIndex];
+          
+          // Add null left columns
+          const nullLeftRow: any = {};
+          if (leftData.length > 0) {
+            for (const key of Object.keys(leftData[0])) {
+              nullLeftRow[`${leftAlias}.${key}`] = null;
+              nullLeftRow[key] = null;
+            }
+          }
+          
+          // Add table prefix to right table columns
+          const prefixedRightRow: any = {};
+          for (const [key, value] of Object.entries(rightRow)) {
+            prefixedRightRow[`${rightAlias}.${key}`] = value;
+            prefixedRightRow[key] = value;
+          }
+          
+          result.push({ ...nullLeftRow, ...prefixedRightRow });
+        }
+      }
+    } else {
+      throw new Error(`Unsupported JOIN type: ${joinType}`);
     }
     
     return result;
