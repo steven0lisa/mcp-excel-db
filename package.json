@@ -3,9 +3,9 @@
   "version": "1.0.6",
   "description": "MCP Server for querying Excel files using SQL syntax",
   "type": "module",
-  "main": "dist/mcp-server.js",
+  "main": "dist/src/mcp-server.js",
   "bin": {
-    "mcp-excel-db": "dist/mcp-server.js"
+    "mcp-excel-db": "dist/src/mcp-server.js"
   },
   "files": [
     "dist/**/*",
