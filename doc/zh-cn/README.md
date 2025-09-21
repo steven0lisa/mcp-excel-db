@@ -167,9 +167,29 @@ FROM products AS a
 INNER JOIN suppliers AS b ON a.supplier_id = b.id;
 
 -- 工作表间的 CROSS JOIN（笛卡尔积）
-SELECT a.name, b.category 
-FROM Sheet1 AS a 
+SELECT a.name, b.category
+FROM Sheet1 AS a
 CROSS JOIN Sheet2 AS b;
+```
+
+### UNION 操作
+```sql
+-- UNION：合并结果并去除重复
+SELECT name FROM employees_2023
+UNION
+SELECT name FROM employees_2024;
+
+-- UNION ALL：合并结果保留重复
+SELECT product_name FROM orders_q1
+UNION ALL
+SELECT product_name FROM orders_q2;
+
+-- 多个 UNION 操作
+SELECT customer_id, amount FROM orders_2023
+UNION
+SELECT customer_id, amount FROM orders_2024
+UNION ALL
+SELECT customer_id, amount FROM orders_2025;
 ```
 
 ### 字符串函数
@@ -254,6 +274,7 @@ FROM products;
 - `GROUP BY` 用于聚合
 - `DISTINCT` 获取唯一值
 - `LIMIT` 限制结果数量
+- `UNION` 和 `UNION ALL` 用于合并查询结果
 
 ## 🚫 限制
 

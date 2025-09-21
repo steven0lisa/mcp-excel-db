@@ -141,9 +141,13 @@ export class ExcelSqlQuery {
       
       // Validate SQL syntax support
       this.validateSqlSupport(ast);
-      
-      // Execute query
-      return this.executeSelect(ast, worksheetData);
+
+      // Execute query based on type
+      if (ast.type === 'union' || (ast.set_op && ast.set_op.startsWith('union'))) {
+        return this.executeUnion(ast, worksheetData);
+      } else {
+        return this.executeSelect(ast, worksheetData);
+      }
       
     } catch (error) {
       if (error instanceof Error) {
@@ -273,14 +277,10 @@ export class ExcelSqlQuery {
       throw new Error('Unsupported SQL syntax: WITH clause is not supported');
     }
 
-    if (ast.union) {
-      throw new Error('Unsupported SQL syntax: UNION operations are not supported');
-    }
-
     // JOIN operations are now supported
 
-    // Check subqueries
-    if (JSON.stringify(ast).includes('"type":"select"') && JSON.stringify(ast).match(/"type":"select"/g)!.length > 1) {
+    // Check subqueries (but allow UNION queries)
+    if (ast.set_op !== 'union' && ast.set_op !== 'union all' && ast.type !== 'union' && JSON.stringify(ast).includes('"type":"select"') && JSON.stringify(ast).match(/"type":"select"/g)!.length > 1) {
       throw new Error('Unsupported SQL syntax: Subqueries are not supported');
     }
   }
@@ -343,6 +343,104 @@ export class ExcelSqlQuery {
     }
 
     return result;
+  }
+
+  /**
+   * Execute UNION operations
+   */
+  private executeUnion(ast: any, worksheetData: Map<string, any[]>): any[] {
+    // Collect all SELECT statements from the UNION chain
+    const selectStatements: any[] = [];
+    let currentAst = ast;
+
+    while (currentAst) {
+      selectStatements.push(currentAst);
+      currentAst = currentAst._next;
+    }
+
+    if (selectStatements.length === 0) {
+      throw new Error('UNION operation requires at least one SELECT statement');
+    }
+
+    let allResults: any[] = [];
+    const firstSelectColumns = this.getSelectColumns(selectStatements[0]);
+
+    // Execute each SELECT statement
+    for (let i = 0; i < selectStatements.length; i++) {
+      const selectAst = selectStatements[i];
+      const currentColumns = this.getSelectColumns(selectAst);
+
+      // Validate column count matches
+      if (currentColumns.length !== firstSelectColumns.length) {
+        throw new Error(`UNION: SELECT statement ${i + 1} returns ${currentColumns.length} columns, but first SELECT returns ${firstSelectColumns.length} columns`);
+      }
+
+      // Execute individual SELECT
+      const selectResults = this.executeSelect(selectAst, worksheetData);
+
+      // Normalize column names to match first SELECT
+      const normalizedResults = selectResults.map(row => {
+        const normalizedRow: any = {};
+        const keys = Object.keys(row);
+
+        for (let j = 0; j < firstSelectColumns.length; j++) {
+          const sourceKey = keys[j];
+          const targetKey = firstSelectColumns[j];
+          if (sourceKey && targetKey) {
+            normalizedRow[targetKey] = row[sourceKey];
+          }
+        }
+        return normalizedRow;
+      });
+
+      allResults = allResults.concat(normalizedResults);
+    }
+
+    // Apply UNION or UNION ALL logic
+    if (ast.set_op === 'union') { // UNION (deduplication)
+      // Remove duplicates
+      const seen = new Set<string>();
+      const deduplicatedResults: any[] = [];
+
+      for (const row of allResults) {
+        const rowKey = JSON.stringify(row);
+        if (!seen.has(rowKey)) {
+          seen.add(rowKey);
+          deduplicatedResults.push(row);
+        }
+      }
+      return deduplicatedResults;
+    } else { // UNION ALL (keep duplicates)
+      return allResults;
+    }
+  }
+
+  /**
+   * Get column names from SELECT statement
+   */
+  private getSelectColumns(selectAst: any): string[] {
+    const columns: string[] = [];
+
+    for (const column of selectAst.columns) {
+      if (column.expr && column.expr.column) {
+        const colName = column.expr.column;
+        const alias = column.as || colName;
+        columns.push(alias);
+      } else if (column.expr && column.expr.type === 'column_ref') {
+        const colName = column.expr.column;
+        const alias = column.as || colName;
+        columns.push(alias);
+      } else if (column.type === 'column_ref') {
+        const colName = column.column;
+        const alias = column.as || colName;
+        columns.push(alias);
+      } else {
+        // Wildcard or other expressions
+        columns.push('*');
+      }
+    }
+
+    return columns;
   }
 
   /**

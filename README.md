@@ -11,8 +11,8 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-14%2F80%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
-[![Coverage](https://img.shields.io/badge/Coverage-17.51%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-14%2F90%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-16.29%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
@@ -197,9 +197,29 @@ FROM products AS a
 INNER JOIN suppliers AS b ON a.supplier_id = b.id;
 
 -- CROSS JOIN between worksheets (Cartesian product)
-SELECT a.name, b.category 
-FROM Sheet1 AS a 
+SELECT a.name, b.category
+FROM Sheet1 AS a
 CROSS JOIN Sheet2 AS b;
+```
+
+### UNION Operations
+```sql
+-- UNION: Combine results and remove duplicates
+SELECT name FROM employees_2023
+UNION
+SELECT name FROM employees_2024;
+
+-- UNION ALL: Combine results keeping duplicates
+SELECT product_name FROM orders_q1
+UNION ALL
+SELECT product_name FROM orders_q2;
+
+-- Multiple UNION operations
+SELECT customer_id, amount FROM orders_2023
+UNION
+SELECT customer_id, amount FROM orders_2024
+UNION ALL
+SELECT customer_id, amount FROM orders_2025;
 ```
 
 ### String Functions
@@ -291,6 +311,7 @@ DESCRIBE Sheet1;
 - `GROUP BY` for aggregation
 - `DISTINCT` for unique values
 - `LIMIT` for result limiting
+- `UNION` and `UNION ALL` for combining query results
 
 ## 🚫 Limitations
 
