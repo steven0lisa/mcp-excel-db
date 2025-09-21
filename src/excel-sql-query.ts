@@ -342,6 +342,11 @@ export class ExcelSqlQuery {
       result = this.applyAggregateFunction(result, ast.columns, tableAliasMap);
     }
 
+    // Apply LIMIT
+    if (ast.limit) {
+      result = this.applyLimit(result, ast.limit);
+    }
+
     return result;
   }
 
@@ -1313,5 +1318,71 @@ export class ExcelSqlQuery {
       seen.add(key);
       return true;
     });
+  }
+
+  /**
+   * Apply LIMIT clause
+   */
+  private applyLimit(data: any[], limitClause: any): any[] {
+    if (!limitClause) {
+      return data;
+    }
+
+    let limit: number;
+    let offset: number = 0;
+
+    // Handle different LIMIT clause structures based on node-sql-parser output
+    if (limitClause.value && Array.isArray(limitClause.value)) {
+      const values = limitClause.value;
+
+      if (limitClause.seperator === '') {
+        // Simple LIMIT n: { seperator: '', value: [{ type: 'number', value: 5 }] }
+        if (values.length === 1 && values[0].type === 'number') {
+          limit = values[0].value;
+        } else {
+          console.warn('⚠️  Unsupported simple LIMIT structure:', JSON.stringify(limitClause));
+          return data;
+        }
+      } else if (limitClause.seperator === 'offset') {
+        // LIMIT n OFFSET m: { seperator: 'offset', value: [{ type: 'number', value: 2 }, { type: 'number', value: 3 }] }
+        // First value is limit, second is offset
+        if (values.length === 2 && values[0].type === 'number' && values[1].type === 'number') {
+          limit = values[0].value;
+          offset = values[1].value;
+        } else {
+          console.warn('⚠️  Unsupported OFFSET LIMIT structure:', JSON.stringify(limitClause));
+          return data;
+        }
+      } else if (limitClause.seperator === ',') {
+        // MySQL style LIMIT offset, count: { seperator: ',', value: [{ type: 'number', value: 2 }, { type: 'number', value: 3 }] }
+        // First value is offset, second is limit
+        if (values.length === 2 && values[0].type === 'number' && values[1].type === 'number') {
+          offset = values[0].value;
+          limit = values[1].value;
+        } else {
+          console.warn('⚠️  Unsupported comma LIMIT structure:', JSON.stringify(limitClause));
+          return data;
+        }
+      } else {
+        console.warn('⚠️  Unknown LIMIT seperator:', limitClause.seperator);
+        return data;
+      }
+    } else {
+      console.warn('⚠️  Unsupported LIMIT clause structure:', JSON.stringify(limitClause));
+      return data;
+    }
+
+    // Ensure limit and offset are non-negative integers
+    limit = Math.max(0, Math.floor(limit));
+    offset = Math.max(0, Math.floor(offset));
+
+    // Apply limit and offset
+    if (offset >= data.length) {
+      // Offset is beyond data length, return empty array
+      return [];
+    }
+
+    const endIndex = Math.min(data.length, offset + limit);
+    return data.slice(offset, endIndex);
   }
 }
