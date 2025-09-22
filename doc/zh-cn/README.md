@@ -7,6 +7,7 @@
 - **SQL 查询支持**：使用标准 SQL 语法对 Excel 工作表执行 SELECT 查询
 - **多工作表支持**：查询同一 Excel 文件中的不同工作表
 - **高级 SQL 操作**：支持 WHERE 子句、ORDER BY、GROUP BY、聚合函数等
+- **字段验证**：当 SQL 查询引用不存在的字段时返回清晰的错误消息
 - **MCP 协议**：与兼容 MCP 的客户端无缝集成
 - **简易安装**：使用单个 npx 命令即可安装和运行
 
@@ -208,13 +209,26 @@ FROM products;
 ### 数学函数
 ```sql
 -- 数学运算函数
-SELECT 
+SELECT
   ABS(profit) as absolute_profit,
   ROUND(price, 2) as rounded_price,
   CEIL(rating) as ceiling_rating,
   FLOOR(discount) as floor_discount,
   RANDOM() as random_number
 FROM products;
+```
+
+### 字段验证
+```sql
+-- 系统现在会验证字段是否存在并返回清晰的错误消息
+SELECT non_existent_field FROM Sheet1;
+-- 错误: Field "non_existent_field" does not exist in table "Sheet1"
+
+SELECT name, typo_field FROM Sheet1 WHERE non_existent_column = 'value';
+-- 错误: Field "typo_field" does not exist in table "Sheet1"
+
+SELECT * FROM Sheet1 ORDER BY wrong_column_name;
+-- 错误: Field "wrong_column_name" does not exist in table "Sheet1"
 ```
 
 ## 🔧 支持的 SQL 功能

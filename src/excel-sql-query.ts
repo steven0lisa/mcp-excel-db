@@ -292,28 +292,34 @@ export class ExcelSqlQuery {
     // Handle JOIN operations or single table
     let result: any[];
     let tableAliasMap: Map<string, string>;
-    
+
     if (ast.from.length === 1 && !ast.from[0].join) {
       // Single table query
       const fromClause = ast.from[0];
       const tableName = fromClause.table;
       const tableAlias = fromClause.as || tableName;
       const sheetData = worksheetData.get(tableName);
-      
+
       if (!sheetData) {
         throw new Error(`Worksheet "${tableName}" does not exist`);
       }
 
       result = [...sheetData];
-      
+
       // Create table alias mapping for column resolution
       tableAliasMap = new Map<string, string>();
       tableAliasMap.set(tableAlias, tableName);
+
+      // Validate field existence for single table queries
+      this.validateFieldExistence(ast, tableName, result, tableAliasMap);
     } else {
       // JOIN operations
       const joinResult = this.executeJoin(ast.from, worksheetData);
       result = joinResult.data;
       tableAliasMap = joinResult.tableAliasMap;
+
+      // Validate field existence for JOIN queries
+      this.validateJoinFieldExistence(ast, tableAliasMap, worksheetData);
     }
 
     // Apply WHERE conditions
@@ -322,8 +328,8 @@ export class ExcelSqlQuery {
     }
 
     // Apply GROUP BY
-    if (ast.groupby && ast.groupby.length > 0) {
-      result = this.applyGroupBy(result, ast.groupby, ast.columns, tableAliasMap);
+    if (ast.groupby && ast.groupby.columns && ast.groupby.columns.length > 0) {
+      result = this.applyGroupBy(result, ast.groupby.columns, ast.columns, tableAliasMap);
     } else {
       // Apply ORDER BY
       if (ast.orderby && ast.orderby.length > 0) {
@@ -1344,6 +1350,211 @@ export class ExcelSqlQuery {
       seen.add(key);
       return true;
     });
+  }
+
+  /**
+   * Validate field existence for single table queries
+   */
+  private validateFieldExistence(ast: any, tableName: string, data: any[], tableAliasMap: Map<string, string>): void {
+    if (!data || data.length === 0) {
+      return; // No data to validate against
+    }
+
+    const availableColumns = new Set(Object.keys(data[0]));
+    const fieldsToValidate: Array<{field: string, context: string}> = [];
+
+    // Collect fields from SELECT columns
+    if (ast.columns) {
+      for (const col of ast.columns) {
+        this.collectFieldsFromExpression(col.expr, tableName, fieldsToValidate, 'SELECT');
+      }
+    }
+
+    // Collect fields from WHERE clause
+    if (ast.where) {
+      this.collectFieldsFromCondition(ast.where, tableName, fieldsToValidate);
+    }
+
+    // Collect fields from ORDER BY
+    if (ast.orderby) {
+      for (const order of ast.orderby) {
+        this.collectFieldsFromExpression(order.expr, tableName, fieldsToValidate, 'ORDER BY');
+      }
+    }
+
+    // Collect fields from GROUP BY
+    if (ast.groupby && ast.groupby.columns) {
+      for (const group of ast.groupby.columns) {
+        this.collectFieldsFromExpression(group, tableName, fieldsToValidate, 'GROUP BY');
+      }
+    }
+
+    // Validate all collected fields
+    for (const {field, context} of fieldsToValidate) {
+      if (field !== '*' && !field.includes('.') && !availableColumns.has(field)) {
+        throw new Error(`Field "${field}" does not exist in table "${tableName}"`);
+      }
+    }
+  }
+
+  /**
+   * Validate field existence for JOIN queries
+   */
+  private validateJoinFieldExistence(ast: any, tableAliasMap: Map<string, string>, worksheetData: Map<string, any[]>): void {
+    const tableColumns = new Map<string, Set<string>>();
+
+    // Build column sets for each table
+    for (const [alias, tableName] of tableAliasMap) {
+      const sheetData = worksheetData.get(tableName);
+      if (sheetData && sheetData.length > 0) {
+        tableColumns.set(alias, new Set(Object.keys(sheetData[0])));
+      }
+    }
+
+    const fieldsToValidate: Array<{field: string, tableAlias: string, context: string}> = [];
+
+    // Collect fields from SELECT columns
+    if (ast.columns) {
+      for (const col of ast.columns) {
+        this.collectJoinFieldsFromExpression(col.expr, fieldsToValidate, 'SELECT');
+      }
+    }
+
+    // Collect fields from WHERE clause
+    if (ast.where) {
+      this.collectJoinFieldsFromCondition(ast.where, fieldsToValidate);
+    }
+
+    // Collect fields from ORDER BY
+    if (ast.orderby) {
+      for (const order of ast.orderby) {
+        this.collectJoinFieldsFromExpression(order.expr, fieldsToValidate, 'ORDER BY');
+      }
+    }
+
+    // Collect fields from GROUP BY
+    if (ast.groupby && ast.groupby.columns) {
+      for (const group of ast.groupby.columns) {
+        this.collectJoinFieldsFromExpression(group, fieldsToValidate, 'GROUP BY');
+      }
+    }
+
+    // Validate all collected fields
+    for (const {field, tableAlias, context} of fieldsToValidate) {
+      if (field !== '*' && tableAlias && tableColumns.has(tableAlias)) {
+        const columns = tableColumns.get(tableAlias)!;
+        if (!columns.has(field)) {
+          const tableName = tableAliasMap.get(tableAlias);
+          throw new Error(`Field "${field}" does not exist in table "${tableName}"`);
+        }
+      }
+    }
+  }
+
+  /**
+   * Collect fields from expression for validation
+   */
+  private collectFieldsFromExpression(expr: any, tableName: string, fieldsToValidate: Array<{field: string, context: string}>, context: string): void {
+    if (!expr) return;
+
+    switch (expr.type) {
+      case 'column_ref':
+        if (expr.column && expr.column !== '*' && !expr.table) {
+          fieldsToValidate.push({field: expr.column, context});
+        }
+        break;
+      case 'double_quote_string':
+        // Double-quoted identifiers are treated as column references
+        if (expr.value && !expr.table) {
+          fieldsToValidate.push({field: expr.value, context});
+        }
+        break;
+      case 'function':
+        // Collect fields from function arguments
+        const args = expr.args?.value || (expr.args?.expr ? [expr.args.expr] : []);
+        for (const arg of args) {
+          this.collectFieldsFromExpression(arg, tableName, fieldsToValidate, context);
+        }
+        break;
+      case 'binary_expr':
+        // Collect fields from binary expressions
+        this.collectFieldsFromExpression(expr.left, tableName, fieldsToValidate, context);
+        this.collectFieldsFromExpression(expr.right, tableName, fieldsToValidate, context);
+        break;
+    }
+  }
+
+  /**
+   * Collect fields from expression for JOIN validation
+   */
+  private collectJoinFieldsFromExpression(expr: any, fieldsToValidate: Array<{field: string, tableAlias: string, context: string}>, context: string): void {
+    if (!expr) return;
+
+    switch (expr.type) {
+      case 'column_ref':
+        if (expr.column && expr.column !== '*') {
+          fieldsToValidate.push({field: expr.column, tableAlias: expr.table || '', context});
+        }
+        break;
+      case 'double_quote_string':
+        // Double-quoted identifiers are treated as column references
+        if (expr.value) {
+          fieldsToValidate.push({field: expr.value, tableAlias: expr.table || '', context});
+        }
+        break;
+      case 'function':
+        // Collect fields from function arguments
+        const args = expr.args?.value || (expr.args?.expr ? [expr.args.expr] : []);
+        for (const arg of args) {
+          this.collectJoinFieldsFromExpression(arg, fieldsToValidate, context);
+        }
+        break;
+      case 'binary_expr':
+        // Collect fields from binary expressions
+        this.collectJoinFieldsFromExpression(expr.left, fieldsToValidate, context);
+        this.collectJoinFieldsFromExpression(expr.right, fieldsToValidate, context);
+        break;
+    }
+  }
+
+  /**
+   * Collect fields from condition for validation
+   */
+  private collectFieldsFromCondition(condition: any, tableName: string, fieldsToValidate: Array<{field: string, context: string}>): void {
+    if (!condition) return;
+
+    switch (condition.type) {
+      case 'binary_expr':
+        this.collectFieldsFromExpression(condition.left, tableName, fieldsToValidate, 'WHERE');
+        this.collectFieldsFromExpression(condition.right, tableName, fieldsToValidate, 'WHERE');
+        break;
+      case 'unary_expr':
+        this.collectFieldsFromExpression(condition.expr, tableName, fieldsToValidate, 'WHERE');
+        break;
+      case 'function':
+        this.collectFieldsFromExpression(condition, tableName, fieldsToValidate, 'WHERE');
+        break;
+    }
+  }
+
+  /**
+   * Collect fields from condition for JOIN validation
+   */
+  private collectJoinFieldsFromCondition(condition: any, fieldsToValidate: Array<{field: string, tableAlias: string, context: string}>): void {
+    if (!condition) return;
+
+    switch (condition.type) {
+      case 'binary_expr':
+        this.collectJoinFieldsFromExpression(condition.left, fieldsToValidate, 'WHERE');
+        this.collectJoinFieldsFromExpression(condition.right, fieldsToValidate, 'WHERE');
+        break;
+      case 'unary_expr':
+        this.collectJoinFieldsFromExpression(condition.expr, fieldsToValidate, 'WHERE');
+        break;
+      case 'function':
+        this.collectJoinFieldsFromExpression(condition, fieldsToValidate, 'WHERE');
+        break;
+    }
   }
 
   /**

@@ -11,8 +11,8 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-14%2F98%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
-[![Coverage](https://img.shields.io/badge/Coverage-15.5%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-11%2F98%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-15.42%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
@@ -22,6 +22,7 @@ A Model Context Protocol (MCP) server that enables SQL querying of Excel files. 
 - **SQL Query Support**: Execute SELECT queries on Excel worksheets using standard SQL syntax
 - **Multiple Worksheet Support**: Query different worksheets within the same Excel file
 - **Advanced SQL Operations**: Support for WHERE clauses, ORDER BY, GROUP BY, aggregation functions, and more
+- **Field Validation**: Clear error messages when SQL queries reference non-existent fields
 - **MCP Protocol**: Seamlessly integrates with MCP-compatible clients
 - **Easy Installation**: Install and run with a single npx command
 
@@ -235,10 +236,23 @@ SELECT
 FROM products;
 ```
 
+### Field Validation
+```sql
+-- The system now validates field existence and returns clear error messages
+SELECT non_existent_field FROM Sheet1;
+-- Error: Field "non_existent_field" does not exist in table "Sheet1"
+
+SELECT name, typo_field FROM Sheet1 WHERE non_existent_column = 'value';
+-- Error: Field "typo_field" does not exist in table "Sheet1"
+
+SELECT * FROM Sheet1 ORDER BY wrong_column_name;
+-- Error: Field "wrong_column_name" does not exist in table "Sheet1"
+```
+
 ### Math Functions
 ```sql
 -- Mathematical operations
-SELECT 
+SELECT
   ABS(profit) as absolute_profit,
   ROUND(price, 2) as rounded_price,
   CEIL(rating) as ceiling_rating,
