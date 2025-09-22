@@ -903,23 +903,45 @@ export class ExcelSqlQuery {
           // If column has table prefix, resolve alias
           const tableAlias = expr.table;
           const columnName = expr.column;
-          
+
           // Try prefixed column name first (for JOIN results)
           const prefixedColumnName = `${tableAlias}.${columnName}`;
           if (row.hasOwnProperty(prefixedColumnName)) {
             return row[prefixedColumnName];
           }
-          
+
           // Fall back to original column name
           return row[columnName];
         }
         return row[expr.column];
+      case 'double_quote_string':
+        // Handle double-quoted identifiers (ANSI SQL standard)
+        // This should be treated as a column reference, not a string literal
+        const quotedColumnName = expr.value;
+        // Handle table alias in double-quoted identifier
+        if (expr.table && tableAliasMap) {
+          const tableAlias = expr.table;
+
+          // Try prefixed column name first (for JOIN results)
+          const prefixedColumnName = `${tableAlias}.${quotedColumnName}`;
+          if (row.hasOwnProperty(prefixedColumnName)) {
+            return row[prefixedColumnName];
+          }
+
+          // Fall back to original column name
+          return row[quotedColumnName];
+        }
+        return row[quotedColumnName];
       case 'number':
         return expr.value;
       case 'string':
         return expr.value;
       case 'single_quote_string':
         return expr.value;
+      case 'double_quote_string':
+        // Handle double-quoted identifiers (ANSI SQL standard)
+        // This should be treated as a column reference, not a string literal
+        return row[expr.value];
       case 'null':
         return null;
       case 'bool':
@@ -993,10 +1015,14 @@ export class ExcelSqlQuery {
   private applyGroupBy(data: any[], groupByColumns: any[], selectColumns: any[], tableAliasMap?: Map<string, string>): any[] {
     // Group by grouping fields
     const groups = new Map<string, any[]>();
-    
+
     for (const row of data) {
       const groupKey = groupByColumns.map(col => {
         const columnName = col.column || col;
+        // Handle double_quote_string type in GROUP BY
+        if (col.type === 'double_quote_string') {
+          return this.getValueFromExpression(row, { type: 'double_quote_string', value: col.value || columnName }, tableAliasMap);
+        }
         return this.getValueFromExpression(row, col.type === 'column_ref' ? col : { type: 'column_ref', column: columnName }, tableAliasMap);
       }).join('|');
       if (!groups.has(groupKey)) {

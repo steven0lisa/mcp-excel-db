@@ -11,8 +11,8 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-14%2F90%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
-[![Coverage](https://img.shields.io/badge/Coverage-15.72%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-14%2F98%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-15.5%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
