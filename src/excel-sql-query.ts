@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import * as fs from 'fs';
 import * as path from 'path';
+import { parse } from 'csv-parse';
 import pkg from 'node-sql-parser';
 const { Parser: NodeSqlParser } = pkg;
 
@@ -219,18 +220,29 @@ export class ExcelSqlQuery {
         console.log(`⚠️  Large file detected (${fileSizeInMB.toFixed(2)}MB). Processing may take longer and use more memory.`);
       }
 
+      // Determine file extension
+      const ext = path.extname(filePath).toLowerCase();
+
       let worksheetData: Map<string, any[]>;
 
-      // Use stream processing for large files (>50MB)
-      if (fileSizeInMB > 50) {
-        console.log(`🔄 Using stream processing for large file...`);
-        worksheetData = await this.streamLoadWorksheetData(filePath);
+      if (ext === '.csv') {
+        // CSV files: single sheet named "Sheet" with streaming and memory limits
+        console.log(`🧾 Detected CSV file. Loading as single worksheet "Sheet"...`);
+        const maxRows = fileSizeInMB > 50 ? 100000 : 10000;
+        worksheetData = await this.loadCsvData(filePath, maxRows);
       } else {
-        console.log(`📖 Using standard processing for file...`);
-        // Load Excel file with optimized settings for smaller files
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(filePath);
-        worksheetData = await this.preloadWorksheetData(workbook, filePath);
+        // Excel files
+        // Use stream processing for large files (>50MB)
+        if (fileSizeInMB > 50) {
+          console.log(`🔄 Using stream processing for large file...`);
+          worksheetData = await this.streamLoadWorksheetData(filePath);
+        } else {
+          console.log(`📖 Using standard processing for file...`);
+          // Load Excel file with optimized settings for smaller files
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.readFile(filePath);
+          worksheetData = await this.preloadWorksheetData(workbook, filePath);
+        }
       }
       
       console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
@@ -259,6 +271,9 @@ export class ExcelSqlQuery {
         if (error.message.includes('EMFILE') || error.message.includes('ENOMEM')) {
           throw new Error(`SQL query execution failed: Insufficient system resources. Try closing other applications or processing a smaller file.`);
         }
+        if (error.message.includes('CSV')) {
+          throw new Error(`SQL query execution failed: ${error.message}`);
+        }
         throw new Error(`SQL query execution failed: ${error.message}`);
       }
       throw new Error(`SQL query execution failed: ${error}`);
@@ -277,6 +292,9 @@ export class ExcelSqlQuery {
       const fileSizeInMB = stats.size / (1024 * 1024);
       
       console.log(`📊 File size: ${fileSizeInMB.toFixed(2)}MB`);
+
+      // Determine file extension
+      const ext = path.extname(filePath).toLowerCase();
       
       // Warn for very large files but allow processing up to 200MB
       if (fileSizeInMB > 200) {
@@ -288,63 +306,98 @@ export class ExcelSqlQuery {
       }
       
       const tables: Array<{table_name: string, rowCount?: number}> = [];
-      
-      // Use stream reading for large files (>50MB) or when regular loading fails
-      if (fileSizeInMB > 50) {
-        console.log(`🔄 Using stream processing for large file...`);
-        
-        // Use ExcelJS stream reader for better memory efficiency
-        const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
-          sharedStrings: 'cache', // Cache shared strings for better performance
-          hyperlinks: 'ignore',   // Ignore hyperlinks to save memory
-          worksheets: 'emit'      // Emit worksheet events
+
+      if (ext === '.csv') {
+        console.log(`🧾 Detected CSV file. Reporting single worksheet "Sheet"...`);
+        const maxCount = 100000;
+        let rowCount = 0;
+        const stream = fs.createReadStream(filePath);
+        const parser = parse({
+          columns: false,
+          relax_quotes: true,
+          skip_empty_lines: true,
+          trim: true,
         });
-        
+        stream.pipe(parser);
         try {
-          let worksheetIndex = 0;
-          // Process worksheets using async iteration
-          for await (const worksheetReader of workbookReader) {
-            worksheetIndex++;
-            // WorksheetReader doesn't have a direct name property, use index-based naming
-            const worksheetName = `Sheet${worksheetIndex}`;
-            let rowCount = 0;
-            
-            // Count rows by iterating through them (lightweight)
-            for await (const row of worksheetReader) {
-              rowCount++;
-              // For very large files, limit row counting to avoid excessive processing
-              if (rowCount > 100000) {
-                rowCount = -1; // Indicate "too many rows to count"
-                break;
-              }
+          for await (const record of parser) {
+            // Skip header row
+            if (rowCount === 0) {
+              rowCount++; // header
+              continue;
             }
-            
-            tables.push({
-              table_name: worksheetName,
-              rowCount: rowCount > 0 ? rowCount - 1 : undefined // Subtract header row
-            });
-            
-            console.log(`📋 Found worksheet: "${worksheetName}" ${rowCount > 0 ? `(~${rowCount - 1} rows)` : '(large dataset)'}`);
+            rowCount++;
+            if (rowCount > maxCount) {
+              rowCount = -1; // too many to count cheaply
+              break;
+            }
           }
-        } catch (streamError) {
-          console.log(`⚠️  Stream processing failed, falling back to standard method...`);
-          throw streamError; // Let it fall through to standard method
+        } catch (e) {
+          console.warn(`⚠️  CSV row counting encountered an error: ${e instanceof Error ? e.message : String(e)}`);
         }
-        
-      } else {
-        // Use standard method for smaller files
-        console.log(`📖 Using standard processing for file...`);
-        
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(filePath);
-        
-        // Only get worksheet names without loading full data
-        workbook.eachSheet((worksheet: any) => {
-          tables.push({
-            table_name: worksheet.name,
-            rowCount: worksheet.rowCount > 0 ? worksheet.rowCount - 1 : 0 // Subtract header row
-          });
+        tables.push({
+          table_name: 'Sheet',
+          rowCount: rowCount > 0 ? rowCount - 1 : undefined,
         });
+      } else {
+        // Use Excel processing
+        // Use stream reading for large files (>50MB) or when regular loading fails
+        if (fileSizeInMB > 50) {
+          console.log(`🔄 Using stream processing for large file...`);
+          
+          // Use ExcelJS stream reader for better memory efficiency
+          const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
+            sharedStrings: 'cache', // Cache shared strings for better performance
+            hyperlinks: 'ignore',   // Ignore hyperlinks to save memory
+            worksheets: 'emit'      // Emit worksheet events
+          });
+          
+          try {
+            let worksheetIndex = 0;
+            // Process worksheets using async iteration
+            for await (const worksheetReader of workbookReader) {
+              worksheetIndex++;
+              // WorksheetReader doesn't have a direct name property, use index-based naming
+              const worksheetName = `Sheet${worksheetIndex}`;
+              let rowCount = 0;
+              
+              // Count rows by iterating through them (lightweight)
+              for await (const row of worksheetReader) {
+                rowCount++;
+                // For very large files, limit row counting to avoid excessive processing
+                if (rowCount > 100000) {
+                  rowCount = -1; // Indicate "too many rows to count"
+                  break;
+                }
+              }
+              
+              tables.push({
+                table_name: worksheetName,
+                rowCount: rowCount > 0 ? rowCount - 1 : undefined // Subtract header row
+              });
+              
+              console.log(`📋 Found worksheet: "${worksheetName}" ${rowCount > 0 ? `(~${rowCount - 1} rows)` : '(large dataset)'}`);
+            }
+          } catch (streamError) {
+            console.log(`⚠️  Stream processing failed, falling back to standard method...`);
+            throw streamError; // Let it fall through to standard method
+          }
+          
+        } else {
+          // Use standard method for smaller files
+          console.log(`📖 Using standard processing for file...`);
+          
+          const workbook = new ExcelJS.Workbook();
+          await workbook.xlsx.readFile(filePath);
+          
+          // Only get worksheet names without loading full data
+          workbook.eachSheet((worksheet: any) => {
+            tables.push({
+              table_name: worksheet.name,
+              rowCount: worksheet.rowCount > 0 ? worksheet.rowCount - 1 : 0 // Subtract header row
+            });
+          });
+        }
       }
       
       console.log(`✅ Excel file processed successfully: ${path.basename(filePath)}`);
@@ -380,6 +433,9 @@ export class ExcelSqlQuery {
       const fileSizeInMB = stats.size / (1024 * 1024);
       
       console.log(`📊 File size: ${fileSizeInMB.toFixed(2)}MB`);
+      
+      // Determine file extension
+      const ext = path.extname(filePath).toLowerCase();
       
       // Warn for very large files but allow processing up to 200MB
       if (fileSizeInMB > 200) {
@@ -441,7 +497,18 @@ export class ExcelSqlQuery {
         }
       }
 
-      // Use standard method for smaller files
+      // CSV handling
+      if (ext === '.csv') {
+        console.log(`🧾 Detected CSV file. Reading header as columns for single worksheet "Sheet"...`);
+        if (worksheetName && worksheetName !== 'Sheet') {
+          throw new Error(`Worksheet "${worksheetName}" does not exist (CSV has only one worksheet named "Sheet")`);
+        }
+        const columns = await this.readCsvHeader(filePath);
+        result.push({ table_name: 'Sheet', columns: columns.length > 0 ? columns : ['Column1', 'Column2', 'Column3'] });
+        return result;
+      }
+
+      // Use standard method for smaller Excel files
       console.log(`📖 Using standard processing for file...`);
       
       const workbook = new ExcelJS.Workbook();
@@ -514,6 +581,97 @@ export class ExcelSqlQuery {
     }
     
     return columns;
+  }
+
+  /**
+   * Load CSV data as a single worksheet named "Sheet" with streaming and memory limits
+   */
+  private async loadCsvData(filePath: string, maxRows: number): Promise<Map<string, any[]>> {
+    const worksheetData: Map<string, any[]> = new Map();
+    const sheetName = 'Sheet';
+    const sheetRows: any[] = [];
+
+    console.log(`🔄 Streaming CSV data (max ${maxRows} rows) ...`);
+
+    const stream = fs.createReadStream(filePath);
+    const parser = parse({
+      columns: true, // use first row as headers
+      skip_empty_lines: true,
+      relax_quotes: true,
+      trim: true,
+      // Prevent extremely large records from exhausting memory
+      max_record_size: 1024 * 1024, // 1MB per record
+    });
+
+    stream.pipe(parser);
+
+    let rowCount = 0;
+    let headersLogged = false;
+
+    try {
+      for await (const record of parser) {
+        if (rowCount >= maxRows) {
+          console.log(`⚠️  Reached maximum row limit (${maxRows}) for CSV worksheet "${sheetName}"`);
+          break;
+        }
+
+        // Skip empty rows
+        const hasData = Object.values(record).some(v => v !== null && v !== undefined && String(v).trim() !== '');
+        if (!hasData) {
+          continue;
+        }
+
+        sheetRows.push(record);
+        rowCount++;
+
+        if (!headersLogged) {
+          const headers = Object.keys(record);
+          console.log(`📋 CSV Header info:`, headers);
+          headersLogged = true;
+        }
+      }
+    } catch (error) {
+      console.error(`❌ Error loading CSV:`, error);
+      throw new Error(`CSV parsing error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    worksheetData.set(sheetName, sheetRows);
+    console.log(`✅ CSV loaded into worksheet "${sheetName}": ${sheetRows.length} rows`);
+    if (sheetRows.length > 0) {
+      console.log(`📄 First row data example:`, JSON.stringify(sheetRows[0], null, 2));
+    }
+
+    return worksheetData;
+  }
+
+  /**
+   * Read CSV header (first row) as columns
+   */
+  private async readCsvHeader(filePath: string): Promise<string[]> {
+    const stream = fs.createReadStream(filePath);
+    const parser = parse({
+      columns: false,
+      skip_empty_lines: true,
+      relax_quotes: true,
+      trim: true,
+    });
+    stream.pipe(parser);
+
+    try {
+      for await (const record of parser) {
+        // First record is header row
+        return record.map((c: any, idx: number) => {
+          const val = c !== null && c !== undefined ? String(c).trim() : '';
+          return val || `Column${idx + 1}`;
+        });
+      }
+    } catch (error) {
+      console.error(`❌ Error reading CSV header:`, error);
+      throw new Error(`CSV header read error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // If file is empty, return default columns
+    return ['Column1', 'Column2', 'Column3'];
   }
 
   /**
@@ -1199,10 +1357,6 @@ export class ExcelSqlQuery {
         return expr.value;
       case 'single_quote_string':
         return expr.value;
-      case 'double_quote_string':
-        // Handle double-quoted identifiers (ANSI SQL standard)
-        // This should be treated as a column reference, not a string literal
-        return row[expr.value];
       case 'null':
         return null;
       case 'bool':
@@ -1414,15 +1568,35 @@ export class ExcelSqlQuery {
    * Apply ORDER BY
    */
   private applyOrderBy(data: any[], orderByColumns: any[], tableAliasMap?: Map<string, string>): any[] {
+    const isNumericLike = (v: any) => {
+      if (v === null || v === undefined) return false;
+      if (typeof v === 'number') return true;
+      if (typeof v === 'string') {
+        // Allow integers and decimals, optional leading/trailing spaces
+        const s = v.trim();
+        return s !== '' && /^-?\d+(\.\d+)?$/.test(s);
+      }
+      return false;
+    };
+
+    const coerceComparable = (aVal: any, bVal: any) => {
+      // If both values are numeric-like, compare numerically
+      if (isNumericLike(aVal) && isNumericLike(bVal)) {
+        return [Number(aVal), Number(bVal)];
+      }
+      return [aVal, bVal];
+    };
+
     return data.sort((a, b) => {
       for (const order of orderByColumns) {
-        const aVal = this.getValueFromExpression(a, order.expr, tableAliasMap);
-        const bVal = this.getValueFromExpression(b, order.expr, tableAliasMap);
-        
+        const rawA = this.getValueFromExpression(a, order.expr, tableAliasMap);
+        const rawB = this.getValueFromExpression(b, order.expr, tableAliasMap);
+        const [aVal, bVal] = coerceComparable(rawA, rawB);
+
         let comparison = 0;
         if (aVal < bVal) comparison = -1;
         else if (aVal > bVal) comparison = 1;
-        
+
         if (comparison !== 0) {
           return order.type === 'DESC' ? -comparison : comparison;
         }

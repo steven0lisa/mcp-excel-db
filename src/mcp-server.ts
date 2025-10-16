@@ -42,13 +42,13 @@ export class ExcelMcpServer {
         tools: [
           {
             name: 'execute_sql_query',
-            description: 'Execute SQL query on an Excel file',
+            description: 'Execute SQL query on an Excel/CSV file',
             inputSchema: {
               type: 'object',
               properties: {
                 filePath: {
                   type: 'string',
-                  description: 'Path to the Excel file',
+                  description: 'Path to the Excel/CSV file',
                 },
                 sql: {
                   type: 'string',
@@ -60,13 +60,13 @@ export class ExcelMcpServer {
           },
           {
             name: 'get_worksheet_info',
-            description: 'Get information about worksheets in an Excel file (lightweight - only returns worksheet names)',
+            description: 'Get information about worksheets in an Excel/CSV file (lightweight - only returns worksheet names)',
             inputSchema: {
               type: 'object',
               properties: {
                 filePath: {
                   type: 'string',
-                  description: 'Path to the Excel file',
+                  description: 'Path to the Excel/CSV file',
                 },
               },
               required: ['filePath'],
@@ -74,13 +74,13 @@ export class ExcelMcpServer {
           },
           {
             name: 'get_worksheet_columns',
-            description: 'Get column information for worksheets in an Excel file (lightweight - only reads first row)',
+            description: 'Get column information for worksheets in an Excel/CSV file (lightweight - only reads first row)',
             inputSchema: {
               type: 'object',
               properties: {
                 filePath: {
                   type: 'string',
-                  description: 'Path to the Excel file',
+                  description: 'Path to the Excel/CSV file',
                 },
                 worksheetName: {
                   type: 'string',
@@ -136,8 +136,8 @@ export class ExcelMcpServer {
 
     // Validate file extension
     const ext = path.extname(filePath).toLowerCase();
-    if (!['.xlsx', '.xls'].includes(ext)) {
-      throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
+    if (!['.xlsx', '.xls', '.csv'].includes(ext)) {
+      throw new Error(`Unsupported file format: ${ext}. Only .xlsx, .xls, and .csv files are supported.`);
     }
 
     const results = await this.excelQuery.executeQuery(sql, filePath);
@@ -190,8 +190,8 @@ export class ExcelMcpServer {
 
     // Validate file extension
     const ext = path.extname(filePath).toLowerCase();
-    if (!['.xlsx', '.xls'].includes(ext)) {
-      throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
+    if (!['.xlsx', '.xls', '.csv'].includes(ext)) {
+      throw new Error(`Unsupported file format: ${ext}. Only .xlsx, .xls, and .csv files are supported.`);
     }
 
     const worksheetInfo = await this.excelQuery.getWorksheetInfo(filePath);
@@ -224,8 +224,8 @@ export class ExcelMcpServer {
 
     // Validate file extension
     const ext = path.extname(filePath).toLowerCase();
-    if (!['.xlsx', '.xls'].includes(ext)) {
-      throw new Error(`Unsupported file format: ${ext}. Only .xlsx and .xls files are supported.`);
+    if (!['.xlsx', '.xls', '.csv'].includes(ext)) {
+      throw new Error(`Unsupported file format: ${ext}. Only .xlsx, .xls, and .csv files are supported.`);
     }
 
     const columnsInfo = await this.excelQuery.getWorksheetColumns(filePath, worksheetName);

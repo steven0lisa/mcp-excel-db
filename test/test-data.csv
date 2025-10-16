@@ -1,0 +1,5 @@
+id,name,category,amount,price,status,description
+1,Apple,水果,10,5.5,active,新鲜苹果
+2,Banana,水果,2,3.0,inactive,熟香蕉
+3,Carrot,蔬菜,30,1.2,active,新鲜胡萝卜
+4,Pear,水果,5,2.5,active,多汁梨

@@ -1,6 +1,6 @@
 {
   "name": "@zhangzichao2008/mcp-excel-db",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "description": "MCP Server for querying Excel files using SQL syntax",
   "type": "module",
   "main": "dist/src/mcp-server.js",
@@ -48,7 +48,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^0.6.0",
     "exceljs": "^4.4.0",
-    "node-sql-parser": "^5.3.12"
+    "node-sql-parser": "^5.3.12",
+    "csv-parse": "^5.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.15.30",
