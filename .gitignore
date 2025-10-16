@@ -141,3 +141,6 @@ vite.config.ts.timestamp-*
 # IDE
 .trae/
 .claude/
+
+
+test/bigexcel.xlsx

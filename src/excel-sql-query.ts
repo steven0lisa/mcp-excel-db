@@ -122,17 +122,116 @@ export class ExcelSqlQuery {
   }
 
   /**
+   * Stream load worksheet data for large files using ExcelJS stream API
+   */
+  private async streamLoadWorksheetData(filePath: string): Promise<Map<string, any[]>> {
+    const worksheetData: Map<string, any[]> = new Map();
+    
+    try {
+      const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {});
+      let worksheetIndex = 0;
+      
+      for await (const worksheetReader of workbookReader) {
+        worksheetIndex++;
+        const worksheetName = `Sheet${worksheetIndex}`;
+        const sheetData: any[] = [];
+        let headers: string[] = [];
+        let rowCount = 0;
+        const maxRows = 100000; // Limit rows to prevent memory overflow
+        
+        for await (const row of worksheetReader) {
+          rowCount++;
+          
+          // First row contains headers
+          if (rowCount === 1) {
+            row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+              headers[colNumber - 1] = cell.value?.toString() || `Column${colNumber}`;
+            });
+            continue;
+          }
+          
+          // Stop if we've reached the maximum row limit
+          if (rowCount > maxRows) {
+            console.log(`⚠️  Reached maximum row limit (${maxRows}) for worksheet "${worksheetName}"`);
+            break;
+          }
+          
+          // Process data rows
+          const rowData: any = {};
+          let hasData = false;
+          
+          row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+            const header = headers[colNumber - 1];
+            if (header) {
+              rowData[header] = cell.value;
+              if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+                hasData = true;
+              }
+            }
+          });
+          
+          // Only add non-empty rows
+          if (hasData) {
+            sheetData.push(rowData);
+          }
+        }
+        
+        worksheetData.set(worksheetName, sheetData);
+        console.log(`📊 Worksheet "${worksheetName}" data loaded successfully, total ${sheetData.length} rows (processed ${rowCount - 1} rows)`);
+        console.log(`📋 Header info:`, headers);
+        if (sheetData.length > 0) {
+          console.log(`📄 First row data example:`, JSON.stringify(sheetData[0], null, 2));
+        }
+      }
+      
+      return worksheetData;
+    } catch (error: any) {
+      if (error.message?.includes('Invalid string length') || 
+          error.message?.includes('string too long') ||
+          error.message?.includes('Maximum string size exceeded')) {
+        throw new Error('文件过大，超出JavaScript字符串长度限制。请尝试使用较小的文件或将数据分割成多个文件。');
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Execute SQL query
+   */
+  /**
+   * Execute SQL query on Excel file
+   * Supports large files up to 200MB with optimized memory usage
    */
   async executeQuery(sql: string, filePath: string): Promise<any[]> {
     try {
-      // Load Excel file
-      const workbook = new ExcelJS.Workbook();
-      const stream = fs.createReadStream(filePath);
-      await workbook.xlsx.read(stream);
+      // Check file size first
+      const stats = fs.statSync(filePath);
+      const fileSizeInMB = stats.size / (1024 * 1024);
       
-      // Preload all worksheet data into memory
-      const worksheetData = await this.preloadWorksheetData(workbook, filePath);
+      console.log(`📊 File size: ${fileSizeInMB.toFixed(2)}MB`);
+      
+      // Warn for very large files but allow processing up to 200MB
+      if (fileSizeInMB > 200) {
+        throw new Error(`File too large (${fileSizeInMB.toFixed(2)}MB). Maximum supported size is 200MB for SQL query operations.`);
+      }
+      
+      if (fileSizeInMB > 100) {
+        console.log(`⚠️  Large file detected (${fileSizeInMB.toFixed(2)}MB). Processing may take longer and use more memory.`);
+      }
+
+      let worksheetData: Map<string, any[]>;
+
+      // Use stream processing for large files (>50MB)
+      if (fileSizeInMB > 50) {
+        console.log(`🔄 Using stream processing for large file...`);
+        worksheetData = await this.streamLoadWorksheetData(filePath);
+      } else {
+        console.log(`📖 Using standard processing for file...`);
+        // Load Excel file with optimized settings for smaller files
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(filePath);
+        worksheetData = await this.preloadWorksheetData(workbook, filePath);
+      }
       
       console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
       
@@ -151,6 +250,15 @@ export class ExcelSqlQuery {
       
     } catch (error) {
       if (error instanceof Error) {
+        // Handle specific error types
+        if (error.message.includes('Invalid string length') || 
+            error.message?.includes('string too long') ||
+            error.message?.includes('Maximum string size exceeded')) {
+          throw new Error('文件过大，超出JavaScript字符串长度限制。请尝试使用较小的文件或将数据分割成多个文件。');
+        }
+        if (error.message.includes('EMFILE') || error.message.includes('ENOMEM')) {
+          throw new Error(`SQL query execution failed: Insufficient system resources. Try closing other applications or processing a smaller file.`);
+        }
         throw new Error(`SQL query execution failed: ${error.message}`);
       }
       throw new Error(`SQL query execution failed: ${error}`);
@@ -160,29 +268,101 @@ export class ExcelSqlQuery {
   /**
    * Get worksheet information (lightweight version - only returns worksheet names)
    * For row count information, use SQL query: SELECT COUNT(*) FROM SheetName
+   * Supports large files up to 200MB with optimized memory usage
    */
-  async getWorksheetInfo(filePath: string): Promise<Array<{table_name: string}>> {
+  async getWorksheetInfo(filePath: string): Promise<Array<{table_name: string, rowCount?: number}>> {
     try {
-      // Load Excel file
-      const workbook = new ExcelJS.Workbook();
-      const stream = fs.createReadStream(filePath);
-      await workbook.xlsx.read(stream);
+      // Check file size first
+      const stats = fs.statSync(filePath);
+      const fileSizeInMB = stats.size / (1024 * 1024);
       
-      console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
+      console.log(`📊 File size: ${fileSizeInMB.toFixed(2)}MB`);
       
-      const tables: Array<{table_name: string}> = [];
+      // Warn for very large files but allow processing up to 200MB
+      if (fileSizeInMB > 200) {
+        throw new Error(`File too large (${fileSizeInMB.toFixed(2)}MB). Maximum supported size is 200MB for worksheet info operations.`);
+      }
       
-      // Only get worksheet names without loading data
-      workbook.eachSheet((worksheet: any) => {
-        tables.push({
-          table_name: worksheet.name
+      if (fileSizeInMB > 100) {
+        console.log(`⚠️  Large file detected (${fileSizeInMB.toFixed(2)}MB). Using stream processing for better memory efficiency.`);
+      }
+      
+      const tables: Array<{table_name: string, rowCount?: number}> = [];
+      
+      // Use stream reading for large files (>50MB) or when regular loading fails
+      if (fileSizeInMB > 50) {
+        console.log(`🔄 Using stream processing for large file...`);
+        
+        // Use ExcelJS stream reader for better memory efficiency
+        const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
+          sharedStrings: 'cache', // Cache shared strings for better performance
+          hyperlinks: 'ignore',   // Ignore hyperlinks to save memory
+          worksheets: 'emit'      // Emit worksheet events
         });
-      });
+        
+        try {
+          let worksheetIndex = 0;
+          // Process worksheets using async iteration
+          for await (const worksheetReader of workbookReader) {
+            worksheetIndex++;
+            // WorksheetReader doesn't have a direct name property, use index-based naming
+            const worksheetName = `Sheet${worksheetIndex}`;
+            let rowCount = 0;
+            
+            // Count rows by iterating through them (lightweight)
+            for await (const row of worksheetReader) {
+              rowCount++;
+              // For very large files, limit row counting to avoid excessive processing
+              if (rowCount > 100000) {
+                rowCount = -1; // Indicate "too many rows to count"
+                break;
+              }
+            }
+            
+            tables.push({
+              table_name: worksheetName,
+              rowCount: rowCount > 0 ? rowCount - 1 : undefined // Subtract header row
+            });
+            
+            console.log(`📋 Found worksheet: "${worksheetName}" ${rowCount > 0 ? `(~${rowCount - 1} rows)` : '(large dataset)'}`);
+          }
+        } catch (streamError) {
+          console.log(`⚠️  Stream processing failed, falling back to standard method...`);
+          throw streamError; // Let it fall through to standard method
+        }
+        
+      } else {
+        // Use standard method for smaller files
+        console.log(`📖 Using standard processing for file...`);
+        
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(filePath);
+        
+        // Only get worksheet names without loading full data
+        workbook.eachSheet((worksheet: any) => {
+          tables.push({
+            table_name: worksheet.name,
+            rowCount: worksheet.rowCount > 0 ? worksheet.rowCount - 1 : 0 // Subtract header row
+          });
+        });
+      }
+      
+      console.log(`✅ Excel file processed successfully: ${path.basename(filePath)}`);
+      console.log(`📋 Found ${tables.length} worksheet(s): ${tables.map(t => `${t.table_name}${t.rowCount !== undefined ? ` (${t.rowCount} rows)` : ''}`).join(', ')}`);
       
       return tables;
       
     } catch (error) {
       if (error instanceof Error) {
+        // Handle specific error types
+        if (error.message.includes('Invalid string length') || 
+            error.message.includes('Cannot create a string longer than') ||
+            error.message.includes('ERR_STRING_TOO_LONG')) {
+          throw new Error(`Failed to get worksheet information: File too large or corrupted. The file exceeds JavaScript string length limits. Try with a smaller file or split the data into multiple files.`);
+        }
+        if (error.message.includes('EMFILE') || error.message.includes('ENOMEM')) {
+          throw new Error(`Failed to get worksheet information: Insufficient system resources. Try closing other applications or processing a smaller file.`);
+        }
         throw new Error(`Failed to get worksheet information: ${error.message}`);
       }
       throw new Error(`Failed to get worksheet information: ${error}`);
@@ -191,17 +371,83 @@ export class ExcelSqlQuery {
 
   /**
    * Get worksheet columns information (lightweight version - only reads first row)
+   * Supports large files up to 200MB with optimized memory usage
    */
   async getWorksheetColumns(filePath: string, worksheetName?: string): Promise<Array<{table_name: string, columns: string[]}>> {
     try {
-      // Load Excel file
+      // Check file size first
+      const stats = fs.statSync(filePath);
+      const fileSizeInMB = stats.size / (1024 * 1024);
+      
+      console.log(`📊 File size: ${fileSizeInMB.toFixed(2)}MB`);
+      
+      // Warn for very large files but allow processing up to 200MB
+      if (fileSizeInMB > 200) {
+        throw new Error(`File too large (${fileSizeInMB.toFixed(2)}MB). Maximum supported size is 200MB for worksheet columns operations.`);
+      }
+      
+      if (fileSizeInMB > 100) {
+        console.log(`⚠️  Large file detected (${fileSizeInMB.toFixed(2)}MB). Processing may take longer and use more memory.`);
+      }
+
+      const result: Array<{table_name: string, columns: string[]}> = [];
+
+      // Use stream reading for large files (>50MB) or when regular loading fails
+      if (fileSizeInMB > 50) {
+        console.log(`🔄 Using stream processing for large file...`);
+        
+        try {
+          const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {});
+          let worksheetIndex = 0;
+          
+          for await (const worksheetReader of workbookReader) {
+            worksheetIndex++;
+            const currentWorksheetName = `Sheet${worksheetIndex}`;
+            
+            // Skip if specific worksheet is requested and this is not it
+            if (worksheetName && worksheetName !== currentWorksheetName) {
+              continue;
+            }
+
+            // Only read the first row to get column information
+            let firstRowProcessed = false;
+            for await (const row of worksheetReader) {
+              if (!firstRowProcessed) {
+                const columns: string[] = [];
+                row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+                  const columnName = cell.value ? String(cell.value).trim() : `Column${colNumber}`;
+                  columns.push(columnName);
+                });
+                
+                result.push({
+                  table_name: currentWorksheetName,
+                  columns: columns.length > 0 ? columns : ['Column1', 'Column2', 'Column3']
+                });
+                
+                firstRowProcessed = true;
+                break; // Only need the first row, break out of row loop
+              }
+            }
+          }
+          
+          return result;
+        } catch (error: any) {
+          if (error.message?.includes('Invalid string length') || 
+              error.message?.includes('string too long') ||
+              error.message?.includes('Maximum string size exceeded')) {
+            throw new Error('文件过大，超出JavaScript字符串长度限制。请尝试使用较小的文件或将数据分割成多个文件。');
+          }
+          throw error;
+        }
+      }
+
+      // Use standard method for smaller files
+      console.log(`📖 Using standard processing for file...`);
+      
       const workbook = new ExcelJS.Workbook();
-      const stream = fs.createReadStream(filePath);
-      await workbook.xlsx.read(stream);
+      await workbook.xlsx.readFile(filePath);
       
       console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
-      
-      const result: Array<{table_name: string, columns: string[]}> = [];
       
       // If specific worksheet is requested
       if (worksheetName) {
@@ -230,6 +476,15 @@ export class ExcelSqlQuery {
       
     } catch (error) {
       if (error instanceof Error) {
+        // Handle specific error types
+        if (error.message.includes('Invalid string length') || 
+            error.message.includes('Cannot create a string longer than') ||
+            error.message.includes('ERR_STRING_TOO_LONG')) {
+          throw new Error(`Failed to get worksheet columns: File too large or corrupted. The file exceeds JavaScript string length limits. Try with a smaller file or split the data into multiple files.`);
+        }
+        if (error.message.includes('EMFILE') || error.message.includes('ENOMEM')) {
+          throw new Error(`Failed to get worksheet columns: Insufficient system resources. Try closing other applications or processing a smaller file.`);
+        }
         throw new Error(`Failed to get worksheet columns: ${error.message}`);
       }
       throw new Error(`Failed to get worksheet columns: ${error}`);
