@@ -1,0 +1,649 @@
+{
+  "meta": {
+    "totalTests": 105,
+    "passedTests": 105,
+    "failedTests": 0,
+    "skippedTests": 0,
+    "successRate": "100.0",
+    "timestamp": "2025-10-17T07:23:45.651Z"
+  },
+  "features": [
+    {
+      "feature": "F-1",
+      "file": "tc-f-1.js",
+      "results": [
+        {
+          "test": "SELECT *",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "SELECT specific column",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "SELECT multiple columns",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "SELECT DISTINCT",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "SELECT with alias",
+          "status": "PASS",
+          "rows": 10
+        }
+      ],
+      "duration": 41
+    },
+    {
+      "feature": "F-10",
+      "file": "tc-f-10.js",
+      "results": [
+        {
+          "test": "RIGHT JOIN basic",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "FULL OUTER JOIN basic",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "RIGHT JOIN with WHERE clause",
+          "status": "PASS",
+          "rows": 4
+        },
+        {
+          "test": "FULL OUTER JOIN multiple columns",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "RIGHT JOIN with alias",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "FULL OUTER JOIN with ORDER BY",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "RIGHT JOIN complex conditions",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "FULL OUTER JOIN NULL handling",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "CROSS JOIN Cartesian product",
+          "status": "PASS",
+          "rows": 25
+        },
+        {
+          "test": "Non-existent table error",
+          "status": "PASS",
+          "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
+        }
+      ],
+      "duration": 48
+    },
+    {
+      "feature": "F-11",
+      "file": "tc-f-11.js",
+      "results": [
+        {
+          "test": "UNION basic",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "UNION ALL basic",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Multiple UNION operations",
+          "status": "PASS",
+          "rows": 11
+        },
+        {
+          "test": "UNION with WHERE clauses",
+          "status": "PASS",
+          "rows": 9
+        },
+        {
+          "test": "UNION with multiple columns",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "UNION with column aliases",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "UNION with mixed data types",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "UNION with empty results",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "Column count mismatch error",
+          "status": "PASS",
+          "error": "SQL query execution failed: UNION: SELECT statement 2 returns 2 columns, but first SELECT returns 1 columns"
+        },
+        {
+          "test": "Non-existent table error",
+          "status": "PASS",
+          "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
+        }
+      ],
+      "duration": 28
+    },
+    {
+      "feature": "F-12",
+      "file": "tc-f-12.js",
+      "results": [
+        {
+          "test": "Basic double-quoted identifier",
+          "status": "PASS",
+          "rows": 1
+        },
+        {
+          "test": "Condition with double-quoted identifier",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "DISTINCT with double-quoted identifier",
+          "status": "PASS",
+          "rows": 3
+        },
+        {
+          "test": "Multiple double-quoted identifiers",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Mixed quoted and unquoted identifiers",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Single-quoted strings compatibility",
+          "status": "PASS",
+          "rows": 3
+        },
+        {
+          "test": "Complex query with functions",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Non-existent double-quoted column",
+          "status": "PASS",
+          "rows": 1
+        }
+      ],
+      "duration": 18
+    },
+    {
+      "feature": "F-14",
+      "file": "tc-f-14.js",
+      "results": [
+        {
+          "test": "Large file processing",
+          "status": "PASS",
+          "worksheets": 1,
+          "duration": 1818
+        },
+        {
+          "test": "Memory optimization validation",
+          "status": "PASS",
+          "note": "Code includes file size checks and optimized loading"
+        }
+      ],
+      "duration": 6284
+    },
+    {
+      "feature": "F-15",
+      "file": "tc-f-15.js",
+      "results": [
+        {
+          "test": "Generate synthetic CSV",
+          "status": "PASS",
+          "rows": 200000,
+          "file": "/Users/steven0lisa/work/personal/mcp-excel-db/test/tmp_streaming_perf.csv"
+        },
+        {
+          "test": "Streaming aggregation execution",
+          "status": "PASS",
+          "duration_ms": 280,
+          "output_sample": {
+            "weighted_sum": 112344042.5,
+            "total_weight": 149995,
+            "weighted_average": 748.985249508317
+          }
+        },
+        {
+          "test": "Baseline aggregation execution",
+          "status": "PASS",
+          "duration_ms": 291,
+          "output_sample": {
+            "weighted_sum": 112344042.5,
+            "total_weight": 149995,
+            "weighted_average": 748.985249508317
+          }
+        },
+        {
+          "test": "Correctness: streaming vs baseline results equal",
+          "status": "PASS"
+        },
+        {
+          "test": "Performance: streaming vs baseline time",
+          "status": "PASS",
+          "note": "Baseline 291ms vs Streaming 280ms (x1.04)"
+        }
+      ],
+      "duration": 678
+    },
+    {
+      "feature": "F-2",
+      "file": "tc-f-2.js",
+      "results": [
+        {
+          "test": "WHERE IS NOT NULL",
+          "status": "PASS"
+        },
+        {
+          "test": "WHERE with AND",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "WHERE with OR",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "WHERE with comparison",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "WHERE with NOT",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "WHERE with parentheses",
+          "status": "PASS",
+          "rows": 10
+        }
+      ],
+      "duration": 20
+    },
+    {
+      "feature": "F-3",
+      "file": "tc-f-3.js",
+      "results": [
+        {
+          "test": "Table alias with AS",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Table alias without AS",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Column reference with alias",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Table alias in WHERE",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Multiple columns with alias",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Table alias with ORDER BY",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Table alias with COUNT",
+          "status": "PASS"
+        }
+      ],
+      "duration": 17
+    },
+    {
+      "feature": "F-4",
+      "file": "tc-f-4.js",
+      "results": [
+        {
+          "test": "INNER JOIN",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "LEFT JOIN",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "JOIN with specific columns",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "JOIN with WHERE",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "JOIN with ORDER BY",
+          "status": "PASS",
+          "rows": 0
+        }
+      ],
+      "duration": 13
+    },
+    {
+      "feature": "F-5",
+      "file": "tc-f-5.js",
+      "results": [
+        {
+          "test": "LENGTH function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "UPPER function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "LOWER function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "TRIM function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "SUBSTR function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "INSTR function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "REPLACE function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Combined string functions",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "String functions in WHERE",
+          "status": "PASS",
+          "rows": 5
+        }
+      ],
+      "duration": 21
+    },
+    {
+      "feature": "F-6",
+      "file": "tc-f-6.js",
+      "results": [
+        {
+          "test": "ABS function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "ROUND function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "CEIL function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "FLOOR function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "RANDOM function",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Combined math functions",
+          "status": "PASS",
+          "rows": 1
+        },
+        {
+          "test": "Math functions in WHERE",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "ROUND negative precision",
+          "status": "PASS",
+          "rows": 1
+        },
+        {
+          "test": "Math functions with aggregation",
+          "status": "PASS",
+          "rows": 1
+        }
+      ],
+      "duration": 20
+    },
+    {
+      "feature": "F-7",
+      "file": "tc-f-7.js",
+      "results": [
+        {
+          "test": "ORDER BY ASC",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY DESC",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Multiple column ORDER BY",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "Mixed ASC/DESC ordering",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY with WHERE",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY with expression",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY with DISTINCT",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY with GROUP BY",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "ORDER BY with alias",
+          "status": "PASS",
+          "rows": 10
+        }
+      ],
+      "duration": 22
+    },
+    {
+      "feature": "F-8",
+      "file": "tc-f-8.js",
+      "results": [
+        {
+          "test": "Basic LIMIT",
+          "status": "PASS",
+          "rows": 5,
+          "expected": 5
+        },
+        {
+          "test": "LIMIT with OFFSET",
+          "status": "PASS",
+          "rows": 3,
+          "limit": 3,
+          "offset": 2
+        },
+        {
+          "test": "LIMIT 0",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "LIMIT larger than dataset",
+          "status": "PASS",
+          "rows": 10,
+          "total": 10
+        },
+        {
+          "test": "LIMIT with ORDER BY",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "LIMIT with WHERE",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "LIMIT with DISTINCT",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Pagination simulation",
+          "status": "PASS",
+          "pages": 3,
+          "totalRows": 9
+        },
+        {
+          "test": "LIMIT with aggregation",
+          "status": "PASS",
+          "rows": 5
+        },
+        {
+          "test": "Top N query pattern",
+          "status": "PASS",
+          "rows": 3
+        }
+      ],
+      "duration": 26
+    },
+    {
+      "feature": "F-9",
+      "file": "tc-f-9.js",
+      "results": [
+        {
+          "test": "IN with strings",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "NOT IN with strings",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "IN with numbers",
+          "status": "PASS",
+          "rows": 4
+        },
+        {
+          "test": "NOT IN with numbers",
+          "status": "PASS",
+          "rows": 8
+        },
+        {
+          "test": "IN with mixed types",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "IN with AND",
+          "status": "PASS",
+          "rows": 6
+        },
+        {
+          "test": "NOT IN with OR",
+          "status": "PASS",
+          "rows": 10
+        },
+        {
+          "test": "IN with single value",
+          "status": "PASS",
+          "rows": 0
+        },
+        {
+          "test": "Error handling",
+          "status": "PASS",
+          "error": "SQL query execution failed: Expected \"#\", \"$\", \"'\", \"(\", \"*\", \"--\", \"/*\", \"0x\", \"@\", \"@@\", \"N\", \"X\", \"\\\"\", \"_binary\", \"_latin1\", \"`\", \"b\", [ \\t\\n\\r], [0-9], or [A-Za-z_一-龥À-ſ] but end of input found."
+        },
+        {
+          "test": "Case sensitivity",
+          "status": "PASS",
+          "note": "lowercase: 0, uppercase: 0"
+        }
+      ],
+      "duration": 19
+    }
+  ]
+}

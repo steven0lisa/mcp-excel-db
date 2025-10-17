@@ -11,8 +11,8 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-15%2F106%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
-[![Coverage](https://img.shields.io/badge/Coverage-22.97%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-18%2F113%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Coverage](https://img.shields.io/badge/Coverage-21.58%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
 A Model Context Protocol (MCP) server that enables SQL querying of Excel files. Transform your Excel spreadsheets into queryable databases using familiar SQL syntax.
@@ -25,6 +25,24 @@ A Model Context Protocol (MCP) server that enables SQL querying of Excel files. 
 - **Field Validation**: Clear error messages when SQL queries reference non-existent fields
 - **MCP Protocol**: Seamlessly integrates with MCP-compatible clients
 - **Easy Installation**: Install and run with a single npx command
+
+## ⚡ Performance Optimizations
+
+For aggregate-only SELECT queries (where all selected expressions are aggregates like SUM/AVG/COUNT or built from them via arithmetic or CASE), the engine now uses a streaming aggregation fast path. Instead of loading the entire worksheet into memory and evaluating expressions per row, it streams through the file once, computes the needed aggregate counters, and then composes the final single-row result.
+
+Benefits:
+- Significantly lower memory usage on large files
+- Faster execution for aggregate-only queries without GROUP BY
+
+Supported patterns include:
+- Direct aggregates: `SELECT SUM(amount) AS total FROM Sheet1`
+- Derived expressions built from aggregates: `SELECT SUM(a*b)/SUM(w) AS weighted_avg FROM Sheet1`
+- CASE built on aggregates: `SELECT CASE WHEN SUM(w)=0 THEN 0 ELSE SUM(a*b*w)/SUM(w) END AS weighted_avg FROM Sheet1 WHERE category='A'`
+
+Notes:
+- The fast path applies to single-table queries without JOIN, GROUP BY, or DISTINCT.
+- You can disable the fast path for testing by constructing the query engine with `{ disableStreamingAggregate: true }`.
+- The default maximum supported rows was increased to 1,000,000 for CSV and stream-loaded Excel paths.
 
 ## 📦 Installation
 

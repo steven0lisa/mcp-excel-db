@@ -49,11 +49,11 @@ async function testF9InExpressions() {
       results.push({ test: 'NOT IN with strings', status: 'FAIL', error: error.message });
     }
     
-    // Test 3: IN with numeric values
+    // Test 3: IN with numeric values (use existing numeric column)
     console.log('\n📋 Test 3: IN with numeric values');
     try {
       const result3 = await excelQuery.executeQuery(
-        "SELECT name, age FROM Sheet1 WHERE age IN (25, 30, 35)",
+        "SELECT name, amount FROM Sheet1 WHERE amount IN (5, 10, 15, 20)",
         testFilePath
       );
       console.log(`    ✅ Success: IN with numbers returned ${result3.length} rows`);
@@ -64,11 +64,11 @@ async function testF9InExpressions() {
       results.push({ test: 'IN with numbers', status: 'FAIL', error: error.message });
     }
     
-    // Test 4: NOT IN with numeric values
+    // Test 4: NOT IN with numeric values (use existing numeric column)
     console.log('\n📋 Test 4: NOT IN with numeric values');
     try {
       const result4 = await excelQuery.executeQuery(
-        "SELECT name, age FROM Sheet1 WHERE age NOT IN (25, 30)",
+        "SELECT name, amount FROM Sheet1 WHERE amount NOT IN (5, 10)",
         testFilePath
       );
       console.log(`    ✅ Success: NOT IN with numbers returned ${result4.length} rows`);
@@ -93,11 +93,11 @@ async function testF9InExpressions() {
       results.push({ test: 'IN with mixed types', status: 'FAIL', error: error.message });
     }
     
-    // Test 6: IN combined with AND condition
+    // Test 6: IN combined with AND condition (numeric column)
     console.log('\n📋 Test 6: IN combined with AND condition');
     try {
       const result6 = await excelQuery.executeQuery(
-        "SELECT name, category, age FROM Sheet1 WHERE category IN ('A', 'B') AND age > 20",
+        "SELECT name, category, amount FROM Sheet1 WHERE category IN ('A', 'B', 'C', '水果', '饮品') AND amount > 5",
         testFilePath
       );
       console.log(`    ✅ Success: IN with AND returned ${result6.length} rows`);

@@ -22,7 +22,7 @@ async function testF11UnionOperations() {
       const result1 = await excelQuery.executeQuery(`
         SELECT name FROM Sheet1
         UNION
-        SELECT name FROM Sheet2
+        SELECT supplier AS name FROM Sheet2
       `, testFilePath);
       console.log(`    ✅ Success: UNION returned ${result1.length} rows`);
       results.push({ test: 'UNION basic', status: 'PASS', rows: result1.length });
@@ -37,7 +37,7 @@ async function testF11UnionOperations() {
       const result2 = await excelQuery.executeQuery(`
         SELECT name FROM Sheet1
         UNION ALL
-        SELECT name FROM Sheet2
+        SELECT supplier AS name FROM Sheet2
       `, testFilePath);
       console.log(`    ✅ Success: UNION ALL returned ${result2.length} rows`);
       results.push({ test: 'UNION ALL basic', status: 'PASS', rows: result2.length });

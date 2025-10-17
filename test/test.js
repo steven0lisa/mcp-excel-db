@@ -13,6 +13,7 @@ async function runAllTests() {
   console.log('🚀 Starting Excel SQL Query Feature Tests\n');
   
   const testCaseDir = path.join(__dirname, 'test-case');
+  const outputDir = path.join(__dirname, 'output');
   const allResults = [];
   let totalTests = 0;
   let passedTests = 0;
@@ -162,6 +163,49 @@ async function runAllTests() {
     console.log('\n📚 Feature Documentation: doc/feature/');
     console.log('🧪 Test Cases: test/test-case/');
     console.log('\nFor detailed feature information, check the corresponding F-{number}.md files.');
+
+    // Write results to files for external inspection
+    try {
+      fs.mkdirSync(outputDir, { recursive: true });
+      const successRate = totalTests > 0 ? ((passedTests / totalTests) * 100).toFixed(1) : 0;
+      const payload = {
+        meta: {
+          totalTests,
+          passedTests,
+          failedTests,
+          skippedTests,
+          successRate,
+          timestamp: new Date().toISOString(),
+        },
+        features: allResults,
+      };
+      fs.writeFileSync(path.join(outputDir, 'last-results.json'), JSON.stringify(payload, null, 2), 'utf-8');
+
+      // Also write a human-readable summary and list of failures
+      const failures = [];
+      for (const res of allResults) {
+        if (res.results) {
+          for (const r of res.results) {
+            if (r.status === 'FAIL') {
+              failures.push({ feature: res.feature, file: res.file, test: r.test, error: r.error || 'Unknown error' });
+            }
+          }
+        } else if (res.error) {
+          failures.push({ feature: res.feature, file: res.file, test: 'ModuleError', error: res.error });
+        }
+      }
+      let summaryText = '';
+      summaryText += `Total: ${totalTests}\nPassed: ${passedTests}\nFailed: ${failedTests}\nSkipped: ${skippedTests}\nSuccessRate: ${successRate}%\n`;
+      if (failures.length > 0) {
+        summaryText += '\nFailures:\n';
+        for (const f of failures) {
+          summaryText += `- ${f.feature} (${f.file}) :: ${f.test} -> ${f.error}\n`;
+        }
+      }
+      fs.writeFileSync(path.join(outputDir, 'last-summary.txt'), summaryText, 'utf-8');
+    } catch (writeErr) {
+      console.warn('⚠️  Failed to write test outputs:', writeErr?.message || writeErr);
+    }
     
   } catch (error) {
     console.log(`❌ Fatal error running tests: ${error.message}`);

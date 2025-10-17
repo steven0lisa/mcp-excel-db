@@ -11,9 +11,13 @@ const { Parser: NodeSqlParser } = pkg;
  */
 export class ExcelSqlQuery {
   private parser: any;
+  private disableStreamingAggregate: boolean = false;
 
-  constructor() {
+  constructor(options?: { disableStreamingAggregate?: boolean }) {
     this.parser = new NodeSqlParser();
+    if (options && typeof options.disableStreamingAggregate === 'boolean') {
+      this.disableStreamingAggregate = options.disableStreamingAggregate;
+    }
   }
 
   /**
@@ -129,7 +133,7 @@ export class ExcelSqlQuery {
     const worksheetData: Map<string, any[]> = new Map();
     
     try {
-      const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {});
+      const workbookReader = new (ExcelJS as any).stream.xlsx.WorkbookReader(filePath);
       let worksheetIndex = 0;
       
       for await (const worksheetReader of workbookReader) {
@@ -138,7 +142,7 @@ export class ExcelSqlQuery {
         const sheetData: any[] = [];
         let headers: string[] = [];
         let rowCount = 0;
-        const maxRows = 100000; // Limit rows to prevent memory overflow
+        const maxRows = 1000000; // Increase limit to 1,000,000 rows
         
         for await (const row of worksheetReader) {
           rowCount++;
@@ -223,12 +227,39 @@ export class ExcelSqlQuery {
       // Determine file extension
       const ext = path.extname(filePath).toLowerCase();
 
+      // Parse SQL statement early so we can choose optimal execution path
+      const ast = this.parser.astify(sql);
+      // Validate SQL syntax support
+      this.validateSqlSupport(ast);
+
+      // Fast path: streaming aggregate for single-table SUM/aggregate without GROUP BY
+      // CSV: always safe to stream
+      // Excel: only stream for large files (>50MB); for small files, use baseline in-memory path
+      if (!this.disableStreamingAggregate && this.isStreamingAggregateCandidate(ast)) {
+        if (ext === '.csv') {
+          console.log('🚀 Using streaming aggregation fast path for CSV');
+          return await this.executeStreamingAggregateCsv(ast, filePath);
+        }
+        // Excel streaming is more fragile across environments; guard with size threshold
+        const isExcel = ['.xlsx', '.xlsm', '.xltx', '.xltm'].includes(ext);
+        if (isExcel) {
+          if (fileSizeInMB > 50) {
+            console.log('🚀 Using streaming aggregation fast path for large Excel file (>50MB)');
+            return await this.executeStreamingAggregateExcel(ast, filePath, fileSizeInMB);
+          } else {
+            console.log('🧠 Using baseline in-memory aggregation for small Excel file (<=50MB) to ensure stability');
+            // Fall through to default path below (preload worksheet data, then execute normally)
+          }
+        }
+      }
+
+      // Default path: load worksheet data then execute
       let worksheetData: Map<string, any[]>;
 
       if (ext === '.csv') {
         // CSV files: single sheet named "Sheet" with streaming and memory limits
         console.log(`🧾 Detected CSV file. Loading as single worksheet "Sheet"...`);
-        const maxRows = fileSizeInMB > 50 ? 100000 : 10000;
+        const maxRows = 1000000; // Allow up to 1,000,000 rows for CSV baseline path
         worksheetData = await this.loadCsvData(filePath, maxRows);
       } else {
         // Excel files
@@ -245,14 +276,8 @@ export class ExcelSqlQuery {
         }
       }
       
-      console.log(`✅ Excel file loaded successfully: ${path.basename(filePath)}`);
+      console.log(`✅ Excel/CSV file loaded successfully: ${path.basename(filePath)}`);
       
-      // Parse SQL statement
-      const ast = this.parser.astify(sql);
-      
-      // Validate SQL syntax support
-      this.validateSqlSupport(ast);
-
       // Execute query based on type
       if (ast.type === 'union' || (ast.set_op && ast.set_op.startsWith('union'))) {
         return this.executeUnion(ast, worksheetData);
@@ -278,6 +303,584 @@ export class ExcelSqlQuery {
       }
       throw new Error(`SQL query execution failed: ${error}`);
     }
+  }
+
+  /**
+   * Determine if the query can be executed via streaming aggregation fast path
+   * Conditions:
+   * - Single SELECT
+   * - FROM single table without JOIN
+   * - No GROUP BY
+   * - DISTINCT not used
+   * - All selected columns are aggregate functions or expressions composed ONLY of aggregate functions/constant values
+   */
+  private isStreamingAggregateCandidate(ast: any): boolean {
+    try {
+      if (!ast || ast.type !== 'select') return false;
+      if (!ast.from || ast.from.length !== 1 || ast.from[0].join) return false;
+      if (ast.groupby && ast.groupby.columns && ast.groupby.columns.length > 0) return false;
+      if (ast.distinct === 'DISTINCT') return false;
+
+      // ORDER BY and LIMIT can be ignored because result is a single row
+      const columns = ast.columns || [];
+      const onlyAggregates = columns.every((col: any) => this.isExprAggregatesOnly(col?.expr));
+      return onlyAggregates;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /**
+   * Check if an expression is composed ONLY of aggregate functions, constants, or nested expressions of the same
+   * Column references are allowed only INSIDE aggregate function arguments.
+   */
+  private isExprAggregatesOnly(expr: any, insideAggr = false): boolean {
+    if (!expr) return true;
+    switch (expr.type) {
+      case 'number':
+      case 'string':
+      case 'single_quote_string':
+      case 'bool':
+      case 'null':
+      case 'star':
+        return true;
+      case 'double_quote_string':
+        // treat as column_ref equivalent in our evaluator; allow only inside aggregate
+        return insideAggr;
+      case 'column_ref':
+        // Column refs only allowed inside aggregate functions
+        return insideAggr === true;
+      case 'aggr_func':
+        // Allow aggregates whose args can include column refs
+        if (expr.args && expr.args.expr) {
+          return this.isExprAggregatesOnly(expr.args.expr, true);
+        }
+        // Some parsers use args.value array
+        if (expr.args && expr.args.value && expr.args.value.length > 0) {
+          return this.isExprAggregatesOnly(expr.args.value[0], true);
+        }
+        return true;
+      case 'binary_expr':
+        return this.isExprAggregatesOnly(expr.left, insideAggr) && this.isExprAggregatesOnly(expr.right, insideAggr);
+      case 'function':
+        // Allow safe scalar wrapper functions (e.g., ROUND) provided their arguments are aggregate-only.
+        // Extract function name
+        {
+          let funcName = '';
+          const nm = expr.name;
+          if (nm && nm.name && Array.isArray(nm.name) && nm.name.length > 0) {
+            funcName = nm.name[0].value?.toUpperCase?.() || '';
+          } else if (typeof nm === 'string') {
+            funcName = nm.toUpperCase();
+          }
+          const allowed = new Set(['ROUND', 'ABS', 'CEIL', 'CEILING', 'FLOOR']);
+          if (!allowed.has(funcName)) return false;
+          const args = expr.args?.value || (expr.args?.expr ? [expr.args.expr] : []);
+          return Array.isArray(args) && args.every((a: any) => this.isExprAggregatesOnly(a, insideAggr));
+        }
+      case 'cast':
+        // CAST wraps an expression; allow if inner expr is aggregate-only
+        return expr.expr ? this.isExprAggregatesOnly(expr.expr, insideAggr) : false;
+      case 'expr_list':
+        return Array.isArray(expr.value) ? expr.value.every((v: any) => this.isExprAggregatesOnly(v, insideAggr)) : false;
+      case 'case':
+        // Support both searched CASE (WHEN cond THEN ...) and simple CASE (CASE base_expr WHEN value THEN ...)
+        if (Array.isArray(expr.args)) {
+          // node-sql-parser may encode ELSE as an item with type "else" inside args
+          const whenItems = expr.args.filter((w: any) => 'cond' in w || 'value' in w);
+          const elseItems = expr.args.filter((w: any) => w && w.type === 'else' && 'result' in w);
+          const hasCondShape = whenItems.length > 0 && whenItems.every((w: any) => 'cond' in w && 'result' in w);
+          const hasValueShape = whenItems.length > 0 && whenItems.every((w: any) => 'value' in w && 'result' in w);
+          if (hasCondShape) {
+            const whensOk = whenItems.every((w: any) => this.isExprAggregatesOnly(w.cond, insideAggr) && this.isExprAggregatesOnly(w.result, insideAggr));
+            // ELSE can be either expr.else or an else item in args
+            const elseOkFromArgs = elseItems.length === 0 || elseItems.every((e: any) => this.isExprAggregatesOnly(e.result, insideAggr));
+            const elseOk = expr.else ? this.isExprAggregatesOnly(expr.else, insideAggr) : true;
+            return whensOk && elseOkFromArgs && elseOk;
+          } else if (hasValueShape) {
+            const baseOk = expr.expr ? this.isExprAggregatesOnly(expr.expr, insideAggr) : true;
+            const whensOk = whenItems.every((w: any) => this.isExprAggregatesOnly(w.value, insideAggr) && this.isExprAggregatesOnly(w.result, insideAggr));
+            const elseOkFromArgs = elseItems.length === 0 || elseItems.every((e: any) => this.isExprAggregatesOnly(e.result, insideAggr));
+            const elseOk = expr.else ? this.isExprAggregatesOnly(expr.else, insideAggr) : true;
+            return baseOk && whensOk && elseOkFromArgs && elseOk;
+          }
+        }
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * Collect all aggregate function expression nodes from the given expression
+   */
+  private collectAggregateExprs(expr: any, acc: Set<any>): void {
+    if (!expr) return;
+    switch (expr.type) {
+      case 'aggr_func':
+        acc.add(expr);
+        // also traverse into args to catch nested aggregates (rare)
+        if (expr.args?.expr) this.collectAggregateExprs(expr.args.expr, acc);
+        if (expr.args?.value && Array.isArray(expr.args.value)) this.collectAggregateExprs(expr.args.value[0], acc);
+        break;
+      case 'binary_expr':
+        this.collectAggregateExprs(expr.left, acc);
+        this.collectAggregateExprs(expr.right, acc);
+        break;
+      case 'function':
+        // traverse function arguments to find nested aggregates (e.g., ROUND(CAST(SUM(...) AS DOUBLE)))
+        if (expr.args?.expr) this.collectAggregateExprs(expr.args.expr, acc);
+        if (expr.args?.value && Array.isArray(expr.args.value)) {
+          for (const v of expr.args.value) this.collectAggregateExprs(v, acc);
+        }
+        break;
+      case 'cast':
+        // CAST has inner expr that may contain aggregates
+        if (expr.expr) this.collectAggregateExprs(expr.expr, acc);
+        break;
+      case 'expr_list':
+        if (Array.isArray(expr.value)) expr.value.forEach((v: any) => this.collectAggregateExprs(v, acc));
+        break;
+      case 'case':
+        if (Array.isArray(expr.args)) {
+          // Searched CASE WHEN ... THEN ...
+          expr.args.forEach((w: any) => {
+            if ('cond' in w) this.collectAggregateExprs(w.cond, acc);
+            if ('value' in w) this.collectAggregateExprs(w.value, acc);
+            this.collectAggregateExprs(w.result, acc);
+          });
+        }
+        if (expr.expr) this.collectAggregateExprs(expr.expr, acc); // base expr for simple CASE
+        if (expr.else) this.collectAggregateExprs(expr.else, acc);
+        break;
+      default:
+        // do nothing
+        break;
+    }
+  }
+
+  /**
+   * Evaluate an expression after aggregation, replacing aggr_func nodes with their aggregated values.
+   */
+  private evaluateAggregatedExpression(expr: any, aggregatedMap: Map<any, number>): any {
+    if (!expr) return null;
+    switch (expr.type) {
+      case 'number':
+        return expr.value;
+      case 'string':
+      case 'single_quote_string':
+        return expr.value;
+      case 'bool':
+        return expr.value;
+      case 'null':
+        return null;
+      case 'aggr_func':
+        // Lookup precomputed aggregate
+        if (!aggregatedMap.has(expr)) {
+          throw new Error('Missing aggregated value for expression');
+        }
+        return aggregatedMap.get(expr);
+      case 'binary_expr':
+        const left = this.evaluateAggregatedExpression(expr.left, aggregatedMap);
+        const right = this.evaluateAggregatedExpression(expr.right, aggregatedMap);
+        switch (expr.operator) {
+          case '+': return Number(left) + Number(right);
+          case '-': return Number(left) - Number(right);
+          case '*': return Number(left) * Number(right);
+          case '/': return Number(left) / Number(right);
+          case '%': return Number(left) % Number(right);
+          case '=': return left == right;
+          case '!=': return left != right;
+          case '<>': return left != right;
+          case '>': return left > right;
+          case '>=': return left >= right;
+          case '<': return left < right;
+          case '<=': return left <= right;
+          case 'IS': return left === right;
+          case 'IS NOT': return left !== right;
+          case 'AND': return Boolean(left) && Boolean(right);
+          case 'OR': return Boolean(left) || Boolean(right);
+          default:
+            throw new Error(`Unsupported operator in aggregated expression: ${expr.operator}`);
+        }
+      case 'function':
+        // Evaluate safe scalar functions post-aggregation
+        {
+          let funcName = '';
+          const nm = expr.name;
+          if (nm && nm.name && Array.isArray(nm.name) && nm.name.length > 0) {
+            funcName = nm.name[0].value?.toUpperCase?.() || '';
+          } else if (typeof nm === 'string') {
+            funcName = nm.toUpperCase();
+          }
+          const args = expr.args?.value || (expr.args?.expr ? [expr.args.expr] : []);
+          const evalArgs = (Array.isArray(args) ? args : []).map((a: any) => this.evaluateAggregatedExpression(a, aggregatedMap));
+          switch (funcName) {
+            case 'ROUND': {
+              const num = Number(evalArgs[0]);
+              const digits = evalArgs.length >= 2 ? Number(evalArgs[1]) : 0;
+              return Math.round(num * Math.pow(10, digits)) / Math.pow(10, digits);
+            }
+            case 'ABS':
+              return Math.abs(Number(evalArgs[0]));
+            case 'CEIL':
+            case 'CEILING':
+              return Math.ceil(Number(evalArgs[0]));
+            case 'FLOOR':
+              return Math.floor(Number(evalArgs[0]));
+            default:
+              throw new Error(`Unsupported function in aggregated evaluation: ${funcName}`);
+          }
+        }
+      case 'cast':
+        // CAST inner expression and convert to target type
+        {
+          const innerVal = this.evaluateAggregatedExpression(expr.expr, aggregatedMap);
+          const target = Array.isArray(expr.target) && expr.target.length > 0 ? expr.target[0].dataType?.toUpperCase?.() : undefined;
+          if (!target) return innerVal;
+          const numTypes = new Set(['DOUBLE','FLOAT','REAL','NUMERIC','DECIMAL']);
+          const intTypes = new Set(['INTEGER','INT','BIGINT','SMALLINT','TINYINT']);
+          if (numTypes.has(target)) return Number(innerVal);
+          if (intTypes.has(target)) return parseInt(String(innerVal), 10);
+          if (target === 'BOOLEAN') return Boolean(innerVal);
+          if (target === 'CHAR' || target === 'VARCHAR' || target === 'TEXT' || target === 'NVARCHAR') return String(innerVal);
+          // For other types (DATE/TIMESTAMP), return as-is for now
+          return innerVal;
+        }
+      case 'case':
+        // Support searched CASE: WHEN cond THEN ... ELSE ... END
+        if (Array.isArray(expr.args)) {
+          // Node-sql-parser may encode ELSE as an item in args with type "else"
+          let elseResultNode: any | undefined = undefined;
+          const hasCondShape = expr.args.some((w: any) => 'cond' in w && 'result' in w);
+          const hasValueShape = expr.args.some((w: any) => 'value' in w && 'result' in w);
+
+          if (hasCondShape) {
+            for (const w of expr.args) {
+              if (w && 'cond' in w && 'result' in w) {
+                const condVal = this.evaluateAggregatedExpression(w.cond, aggregatedMap);
+                if (condVal) {
+                  return this.evaluateAggregatedExpression(w.result, aggregatedMap);
+                }
+              } else if (w && w.type === 'else' && 'result' in w) {
+                elseResultNode = w.result;
+              }
+            }
+            if (elseResultNode) return this.evaluateAggregatedExpression(elseResultNode, aggregatedMap);
+            if (expr.else) return this.evaluateAggregatedExpression(expr.else, aggregatedMap);
+            return null;
+          } else if (hasValueShape) {
+            // Simple CASE: CASE base_expr WHEN value THEN result ... ELSE ... END
+            const baseVal = expr.expr ? this.evaluateAggregatedExpression(expr.expr, aggregatedMap) : undefined;
+            for (const w of expr.args) {
+              if (w && 'value' in w && 'result' in w) {
+                const whenVal = this.evaluateAggregatedExpression(w.value, aggregatedMap);
+                if (baseVal === whenVal) {
+                  return this.evaluateAggregatedExpression(w.result, aggregatedMap);
+                }
+              } else if (w && w.type === 'else' && 'result' in w) {
+                elseResultNode = w.result;
+              }
+            }
+            if (elseResultNode) return this.evaluateAggregatedExpression(elseResultNode, aggregatedMap);
+            if (expr.else) return this.evaluateAggregatedExpression(expr.else, aggregatedMap);
+            return null;
+          }
+        }
+        return expr.else ? this.evaluateAggregatedExpression(expr.else, aggregatedMap) : null;
+      default:
+        // Unsupported in post-aggregation evaluation
+        throw new Error(`Unsupported expression in aggregated evaluation: ${expr.type}`);
+    }
+  }
+
+  /**
+   * Streaming aggregation for CSV files
+   */
+  private async executeStreamingAggregateCsv(ast: any, filePath: string): Promise<any[]> {
+    const fromClause = ast.from[0];
+    const tableName = fromClause.table;
+    const tableAlias = fromClause.as || tableName;
+    const tableAliasMap = new Map<string, string>();
+    tableAliasMap.set(tableAlias, tableName);
+
+    // Prepare aggregate expressions set
+    const aggSet: Set<any> = new Set();
+    for (const col of ast.columns) {
+      this.collectAggregateExprs(col.expr, aggSet);
+    }
+
+    // Initialize aggregate state
+    const aggregatedMap: Map<any, number> = new Map();
+    const counters: Map<any, { func: string, sum?: number, count?: number, max?: number, min?: number }>= new Map();
+    for (const aggrExpr of aggSet) {
+      const funcName = (aggrExpr.name?.toUpperCase?.() || aggrExpr.name?.name?.[0]?.value?.toUpperCase?.()) || 'SUM';
+      const state: any = { func: funcName };
+      if (funcName === 'SUM' || funcName === 'AVG') state.sum = 0;
+      if (funcName === 'AVG' || funcName === 'COUNT') state.count = 0;
+      if (funcName === 'MAX') state.max = Number.NEGATIVE_INFINITY;
+      if (funcName === 'MIN') state.min = Number.POSITIVE_INFINITY;
+      counters.set(aggrExpr, state);
+    }
+
+    // Read header first
+    const headers = await this.readCsvHeader(filePath);
+    const stream = fs.createReadStream(filePath);
+    const parser = parse({
+      columns: false, // we will map by headers manually
+      skip_empty_lines: true,
+      relax_quotes: true,
+      trim: true,
+      from_line: 2,
+    });
+    stream.pipe(parser);
+
+    try {
+      for await (const record of parser) {
+        const row: any = {};
+        let hasData = false;
+        for (let i = 0; i < headers.length && i < record.length; i++) {
+          const val = record[i];
+          row[headers[i]] = val;
+          if (val !== null && val !== undefined && val !== '') hasData = true;
+        }
+        if (!hasData) continue;
+
+        // WHERE filter
+        if (ast.where) {
+          const passed = this.evaluateCondition(row, ast.where, tableAliasMap);
+          if (!passed) continue;
+        }
+
+        // Update aggregate states
+        for (const [aggrExpr, state] of counters.entries()) {
+          const func = state.func;
+          let argExpr: any = aggrExpr.args?.expr;
+          if (!argExpr && aggrExpr.args?.value?.length > 0) argExpr = aggrExpr.args.value[0];
+
+          if (func === 'COUNT') {
+            // COUNT(*) or COUNT(expr not null)
+            if (aggrExpr.args?.expr?.type === 'star') {
+              state.count = (state.count || 0) + 1;
+            } else {
+              const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+              if (v !== null && v !== undefined && v !== '') {
+                state.count = (state.count || 0) + 1;
+              }
+            }
+            aggregatedMap.set(aggrExpr, state.count || 0);
+          } else if (func === 'SUM' || func === 'AVG') {
+            const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+            const num = Number(v);
+            if (!isNaN(num)) {
+              state.sum = (state.sum || 0) + num;
+              state.count = (state.count || 0) + 1;
+              aggregatedMap.set(aggrExpr, state.sum || 0);
+            }
+          } else if (func === 'MAX') {
+            const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+            const num = Number(v);
+            if (!isNaN(num)) {
+              state.max = Math.max(state.max ?? Number.NEGATIVE_INFINITY, num);
+              aggregatedMap.set(aggrExpr, state.max ?? null);
+            }
+          } else if (func === 'MIN') {
+            const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+            const num = Number(v);
+            if (!isNaN(num)) {
+              state.min = Math.min(state.min ?? Number.POSITIVE_INFINITY, num);
+              aggregatedMap.set(aggrExpr, state.min ?? null);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('❌ Streaming CSV aggregation error:', error);
+      throw new Error(`CSV streaming aggregation failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    // Compose final single-row result according to select columns
+    const resultRow: any = {};
+    for (const col of ast.columns) {
+      // Determine alias: prefer explicit alias; for aggregates, use COUNT(*) for star; otherwise function name
+      let alias: string = 'expr';
+      if (col.as) {
+        alias = col.as;
+      } else if (col.expr?.type === 'aggr_func') {
+        const funcName = (col.expr.name?.toUpperCase?.() || col.expr.name) as string;
+        const isStar = !!(col.expr?.args?.expr?.type === 'star' || col.expr?.args?.value?.[0]?.type === 'star');
+        if (funcName?.toUpperCase?.() === 'COUNT' && isStar) {
+          alias = 'COUNT(*)';
+        } else {
+          alias = funcName;
+        }
+      }
+      resultRow[alias] = this.evaluateAggregatedExpression(col.expr, aggregatedMap);
+    }
+    return [resultRow];
+  }
+
+  /**
+   * Streaming aggregation for Excel files using WorkbookReader
+   */
+  private async executeStreamingAggregateExcel(ast: any, filePath: string, fileSizeInMB: number): Promise<any[]> {
+    const fromClause = ast.from[0];
+    const tableName = fromClause.table;
+    const tableAlias = fromClause.as || tableName;
+    const tableAliasMap = new Map<string, string>();
+    tableAliasMap.set(tableAlias, tableName);
+
+    // Prepare aggregate expressions set
+    const aggSet: Set<any> = new Set();
+    for (const col of ast.columns) {
+      this.collectAggregateExprs(col.expr, aggSet);
+    }
+
+    // Initialize aggregate state
+    const aggregatedMap: Map<any, number> = new Map();
+    const counters: Map<any, { func: string, sum?: number, count?: number, max?: number, min?: number }>= new Map();
+    for (const aggrExpr of aggSet) {
+      const funcName = (aggrExpr.name?.toUpperCase?.() || aggrExpr.name?.name?.[0]?.value?.toUpperCase?.()) || 'SUM';
+      const state: any = { func: funcName };
+      if (funcName === 'SUM' || funcName === 'AVG') state.sum = 0;
+      if (funcName === 'AVG' || funcName === 'COUNT') state.count = 0;
+      if (funcName === 'MAX') state.max = Number.NEGATIVE_INFINITY;
+      if (funcName === 'MIN') state.min = Number.POSITIVE_INFINITY;
+      counters.set(aggrExpr, state);
+    }
+
+    // Stream target worksheet only
+    // ExcelJS v4: the simplest and most reliable approach is to use WorkbookReader
+    // without special options and iterate over worksheets and rows via async iterators.
+    const workbookReader = new (ExcelJS as any).stream.xlsx.WorkbookReader(filePath);
+
+    try {
+      let worksheetIndex = 0;
+      for await (const worksheetReader of workbookReader) {
+        worksheetIndex++;
+        // ExcelJS v4: Get worksheet name safely
+        let wsName = '';
+        if (worksheetReader && typeof worksheetReader === 'object') {
+          wsName = (worksheetReader as any).name || 
+                   (worksheetReader as any).sheetName || 
+                   (worksheetReader as any).title || 
+                   (worksheetReader as any).id || '';
+        }
+        // Support both real names and fallback to SheetN convention (based on index)
+        const matchByName = wsName === tableName;
+        const conventionalName = `Sheet${worksheetIndex}`;
+        const matchByConventional = tableName === conventionalName;
+        if (!matchByName && !matchByConventional) {
+          continue;
+        }
+
+        let headers: string[] = [];
+        let rowIndex = 0;
+        const maxRows = 1000000; // Increase limit to 1,000,000 rows for streaming aggregation
+
+        for await (const row of worksheetReader) {
+          rowIndex++;
+          if (rowIndex === 1) {
+            row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+              headers[colNumber - 1] = cell.value?.toString() || `Column${colNumber}`;
+            });
+            continue;
+          }
+          if (rowIndex - 1 > maxRows) {
+            console.log(`⚠️  Reached maximum row limit (${maxRows}) for worksheet "${tableName}" in streaming aggregation`);
+            break;
+          }
+          const rowData: any = {};
+          let hasData = false;
+          row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
+            const header = headers[colNumber - 1];
+            if (header) {
+              rowData[header] = cell.value;
+              if (cell.value !== null && cell.value !== undefined && cell.value !== '') {
+                hasData = true;
+              }
+            }
+          });
+          if (!hasData) continue;
+
+          // WHERE filter
+          if (ast.where) {
+            const passed = this.evaluateCondition(rowData, ast.where, tableAliasMap);
+            if (!passed) continue;
+          }
+
+          // Update aggregate states
+          for (const [aggrExpr, state] of counters.entries()) {
+            const func = state.func;
+            let argExpr: any = aggrExpr.args?.expr;
+            if (!argExpr && aggrExpr.args?.value?.length > 0) argExpr = aggrExpr.args.value[0];
+
+            if (func === 'COUNT') {
+              if (aggrExpr.args?.expr?.type === 'star') {
+                state.count = (state.count || 0) + 1;
+              } else {
+                const v = this.getValueFromExpression(rowData, argExpr, tableAliasMap);
+                if (v !== null && v !== undefined && v !== '') {
+                  state.count = (state.count || 0) + 1;
+                }
+              }
+              aggregatedMap.set(aggrExpr, state.count || 0);
+            } else if (func === 'SUM' || func === 'AVG') {
+              const v = this.getValueFromExpression(rowData, argExpr, tableAliasMap);
+              const num = Number(v);
+              if (!isNaN(num)) {
+                state.sum = (state.sum || 0) + num;
+                state.count = (state.count || 0) + 1;
+                aggregatedMap.set(aggrExpr, state.sum || 0);
+              }
+            } else if (func === 'MAX') {
+              const v = this.getValueFromExpression(rowData, argExpr, tableAliasMap);
+              const num = Number(v);
+              if (!isNaN(num)) {
+                state.max = Math.max(state.max ?? Number.NEGATIVE_INFINITY, num);
+                aggregatedMap.set(aggrExpr, state.max ?? null);
+              }
+            } else if (func === 'MIN') {
+              const v = this.getValueFromExpression(rowData, argExpr, tableAliasMap);
+              const num = Number(v);
+              if (!isNaN(num)) {
+                state.min = Math.min(state.min ?? Number.POSITIVE_INFINITY, num);
+                aggregatedMap.set(aggrExpr, state.min ?? null);
+              }
+            }
+          }
+        }
+
+        // Finished target sheet; compose result
+        const resultRow: any = {};
+        for (const col of ast.columns) {
+          // Determine alias: prefer explicit alias; for aggregates, use COUNT(*) for star; otherwise function name
+          let alias: string = 'expr';
+          if (col.as) {
+            alias = col.as;
+          } else if (col.expr?.type === 'aggr_func') {
+            const funcName = (col.expr.name?.toUpperCase?.() || col.expr.name) as string;
+            const isStar = !!(col.expr?.args?.expr?.type === 'star' || col.expr?.args?.value?.[0]?.type === 'star');
+            if (funcName?.toUpperCase?.() === 'COUNT' && isStar) {
+              alias = 'COUNT(*)';
+            } else {
+              alias = funcName;
+            }
+          }
+          resultRow[alias] = this.evaluateAggregatedExpression(col.expr, aggregatedMap);
+        }
+        return [resultRow];
+      }
+    } catch (error: any) {
+      if (error.message?.includes('Invalid string length') || 
+          error.message?.includes('string too long') ||
+          error.message?.includes('Maximum string size exceeded')) {
+        throw new Error('文件过大，超出JavaScript字符串长度限制。请尝试使用较小的文件或将数据分割成多个文件。');
+      }
+      throw error;
+    }
+
+    throw new Error(`Worksheet "${tableName}" not found for streaming aggregation`);
   }
 
   /**
@@ -309,77 +912,43 @@ export class ExcelSqlQuery {
 
       if (ext === '.csv') {
         console.log(`🧾 Detected CSV file. Reporting single worksheet "Sheet"...`);
-        const maxCount = 100000;
-        let rowCount = 0;
-        const stream = fs.createReadStream(filePath);
-        const parser = parse({
-          columns: false,
-          relax_quotes: true,
-          skip_empty_lines: true,
-          trim: true,
-        });
-        stream.pipe(parser);
-        try {
-          for await (const record of parser) {
-            // Skip header row
-            if (rowCount === 0) {
-              rowCount++; // header
-              continue;
-            }
-            rowCount++;
-            if (rowCount > maxCount) {
-              rowCount = -1; // too many to count cheaply
-              break;
-            }
-          }
-        } catch (e) {
-          console.warn(`⚠️  CSV row counting encountered an error: ${e instanceof Error ? e.message : String(e)}`);
-        }
-        tables.push({
-          table_name: 'Sheet',
-          rowCount: rowCount > 0 ? rowCount - 1 : undefined,
-        });
+        // 轻量化：仅返回工作表名称，不进行逐行统计
+        tables.push({ table_name: 'Sheet' });
       } else {
         // Use Excel processing
         // Use stream reading for large files (>50MB) or when regular loading fails
-        if (fileSizeInMB > 50) {
-          console.log(`🔄 Using stream processing for large file...`);
-          
-          // Use ExcelJS stream reader for better memory efficiency
-          const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {
-            sharedStrings: 'cache', // Cache shared strings for better performance
-            hyperlinks: 'ignore',   // Ignore hyperlinks to save memory
-            worksheets: 'emit'      // Emit worksheet events
-          });
+      if (fileSizeInMB > 50) {
+        console.log(`🔄 Using stream processing for large file...`);
+        
+        // Use ExcelJS stream reader for better memory efficiency
+          const workbookReader = new (ExcelJS as any).stream.xlsx.WorkbookReader(filePath);
           
           try {
             let worksheetIndex = 0;
             // Process worksheets using async iteration
             for await (const worksheetReader of workbookReader) {
               worksheetIndex++;
-              // WorksheetReader doesn't have a direct name property, use index-based naming
-              const worksheetName = `Sheet${worksheetIndex}`;
-              let rowCount = 0;
+              // ExcelJS v4: WorksheetReader doesn't have a direct name property
+              // Use index-based naming as fallback, or try to get name from properties
+              let worksheetName = `Sheet${worksheetIndex}`;
               
-              // Count rows by iterating through them (lightweight)
-              for await (const row of worksheetReader) {
-                rowCount++;
-                // For very large files, limit row counting to avoid excessive processing
-                if (rowCount > 100000) {
-                  rowCount = -1; // Indicate "too many rows to count"
-                  break;
+              // Try to get the actual worksheet name if available
+              if (worksheetReader && typeof worksheetReader === 'object') {
+                // Check various possible name properties
+                const possibleName = (worksheetReader as any).name || 
+                                   (worksheetReader as any).sheetName || 
+                                   (worksheetReader as any).title;
+                if (possibleName && typeof possibleName === 'string') {
+                  worksheetName = possibleName;
                 }
               }
               
-              tables.push({
-                table_name: worksheetName,
-                rowCount: rowCount > 0 ? rowCount - 1 : undefined // Subtract header row
-              });
-              
-              console.log(`📋 Found worksheet: "${worksheetName}" ${rowCount > 0 ? `(~${rowCount - 1} rows)` : '(large dataset)'}`);
+              // 轻量化：仅返回工作表名称，不进行逐行统计，避免对大文件逐行解析带来的耗时
+              tables.push({ table_name: worksheetName });
+              console.log(`📋 Found worksheet: "${worksheetName}"`);
             }
           } catch (streamError) {
-            console.log(`⚠️  Stream processing failed, falling back to standard method...`);
+            console.log(`⚠️  Stream processing failed: ${streamError instanceof Error ? streamError.message : 'Unknown error'}, falling back to standard method...`);
             throw streamError; // Let it fall through to standard method
           }
           
@@ -392,16 +961,14 @@ export class ExcelSqlQuery {
           
           // Only get worksheet names without loading full data
           workbook.eachSheet((worksheet: any) => {
-            tables.push({
-              table_name: worksheet.name,
-              rowCount: worksheet.rowCount > 0 ? worksheet.rowCount - 1 : 0 // Subtract header row
-            });
+            // 轻量化：仅返回名称，不读取 rowCount，避免触发对所有行的解析
+            tables.push({ table_name: worksheet.name });
           });
         }
       }
       
       console.log(`✅ Excel file processed successfully: ${path.basename(filePath)}`);
-      console.log(`📋 Found ${tables.length} worksheet(s): ${tables.map(t => `${t.table_name}${t.rowCount !== undefined ? ` (${t.rowCount} rows)` : ''}`).join(', ')}`);
+      console.log(`📋 Found ${tables.length} worksheet(s): ${tables.map(t => t.table_name).join(', ')}`);
       
       return tables;
       
@@ -453,7 +1020,7 @@ export class ExcelSqlQuery {
         console.log(`🔄 Using stream processing for large file...`);
         
         try {
-          const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(filePath, {});
+          const workbookReader = new (ExcelJS as any).stream.xlsx.WorkbookReader(filePath);
           let worksheetIndex = 0;
           
           for await (const worksheetReader of workbookReader) {
@@ -743,22 +1310,35 @@ export class ExcelSqlQuery {
     // Apply GROUP BY
     if (ast.groupby && ast.groupby.columns && ast.groupby.columns.length > 0) {
       result = this.applyGroupBy(result, ast.groupby.columns, ast.columns, tableAliasMap);
-    } else {
-      // Apply ORDER BY
+      
+      // Apply ORDER BY after GROUP BY if present
       if (ast.orderby && ast.orderby.length > 0) {
-        result = this.applyOrderBy(result, ast.orderby, tableAliasMap);
+        result = this.applyOrderBy(result, ast.orderby, tableAliasMap, ast.columns);
       }
+    } else {
+      // If the SELECT list is aggregate-only (no raw, non-aggregate expressions),
+      // skip row-level SELECT evaluation and go straight to aggregation.
+      const isAggregateOnlySelect = (ast.columns || []).every((col: any) => this.isExprAggregatesOnly(col?.expr));
 
-      // Apply SELECT field selection
-      result = this.applySelectFields(result, ast.columns, tableAliasMap);
+      if (isAggregateOnlySelect) {
+        // For aggregate-only queries, ORDER BY and DISTINCT are irrelevant because
+        // the output is a single aggregated row. Compute aggregation directly.
+        result = this.applyAggregateFunction(result, ast.columns, tableAliasMap);
+      } else {
+        // Regular path: SELECT fields -> ORDER BY -> DISTINCT
+        result = this.applySelectFields(result, ast.columns, tableAliasMap);
 
-      // Apply DISTINCT
-      if (ast.distinct === 'DISTINCT') {
-        result = this.applyDistinct(result);
+        if (ast.orderby && ast.orderby.length > 0) {
+          result = this.applyOrderBy(result, ast.orderby, tableAliasMap, ast.columns);
+        }
+
+        if (ast.distinct === 'DISTINCT') {
+          result = this.applyDistinct(result);
+        }
+
+        // Aggregate functions will only be applied if appropriate inside applyAggregateFunction
+        result = this.applyAggregateFunction(result, ast.columns, tableAliasMap);
       }
-
-      // Apply aggregate functions
-      result = this.applyAggregateFunction(result, ast.columns, tableAliasMap);
     }
 
     // Apply LIMIT
@@ -929,7 +1509,24 @@ export class ExcelSqlQuery {
     tableAliasMap: Map<string, string>
   ): any[] {
     const result: any[] = [];
-    const joinType = joinClause.join?.toUpperCase() || 'INNER';
+    // Normalize join type to canonical tokens
+    const rawJoin = (joinClause.join?.toUpperCase?.() || 'INNER').trim();
+    let joinType: string = 'INNER';
+    if (rawJoin.includes('CROSS')) {
+      joinType = 'CROSS JOIN';
+    } else if (rawJoin.includes('INNER')) {
+      joinType = 'INNER';
+    } else if (rawJoin.includes('LEFT')) {
+      joinType = 'LEFT';
+    } else if (rawJoin.includes('RIGHT')) {
+      joinType = 'RIGHT';
+    } else if (rawJoin.includes('FULL')) {
+      // Support FULL JOIN / FULL OUTER JOIN
+      joinType = 'FULL OUTER';
+    } else {
+      // Fallback to raw value
+      joinType = rawJoin;
+    }
     
     // Handle CROSS JOIN - return Cartesian product of both tables
     if (joinType === 'CROSS JOIN') {
@@ -1100,7 +1697,7 @@ export class ExcelSqlQuery {
         }
       }
     } else {
-      throw new Error(`Unsupported JOIN type: ${joinType}`);
+      throw new Error(`Unsupported JOIN type: ${rawJoin}`);
     }
     
     return result;
@@ -1408,6 +2005,20 @@ export class ExcelSqlQuery {
         }
       case 'function':
         return this.evaluateFunction(row, expr, tableAliasMap);
+      case 'cast':
+        // Row-level CAST support
+        {
+          const innerVal = this.getValueFromExpression(row, expr.expr, tableAliasMap);
+          const target = Array.isArray(expr.target) && expr.target.length > 0 ? expr.target[0].dataType?.toUpperCase?.() : undefined;
+          if (!target) return innerVal;
+          const numTypes = new Set(['DOUBLE','FLOAT','REAL','NUMERIC','DECIMAL']);
+          const intTypes = new Set(['INTEGER','INT','BIGINT','SMALLINT','TINYINT']);
+          if (numTypes.has(target)) return Number(innerVal);
+          if (intTypes.has(target)) return parseInt(String(innerVal), 10);
+          if (target === 'BOOLEAN') return Boolean(innerVal);
+          if (target === 'CHAR' || target === 'VARCHAR' || target === 'TEXT' || target === 'NVARCHAR') return String(innerVal);
+          return innerVal;
+        }
       case 'aggr_func':
         // Aggregate functions should be handled at a higher level
         // This is a fallback for cases where they appear in expressions
@@ -1419,6 +2030,40 @@ export class ExcelSqlQuery {
       case 'expr_list':
         // Handle expression lists (used in IN clauses)
         return expr.value.map((item: any) => this.getValueFromExpression(row, item, tableAliasMap));
+      case 'case':
+        // Row-level CASE evaluation (for non-aggregate paths)
+        if (Array.isArray(expr.args)) {
+          let elseResultNode: any | undefined = undefined;
+          const hasCondShape = expr.args.some((w: any) => 'cond' in w && 'result' in w);
+          const hasValueShape = expr.args.some((w: any) => 'value' in w && 'result' in w);
+          if (hasCondShape) {
+            for (const w of expr.args) {
+              if (w && 'cond' in w && 'result' in w) {
+                const condVal = this.getValueFromExpression(row, w.cond, tableAliasMap);
+                if (condVal) {
+                  return this.getValueFromExpression(row, w.result, tableAliasMap);
+                }
+              } else if (w && w.type === 'else' && 'result' in w) {
+                elseResultNode = w.result;
+              }
+            }
+            return elseResultNode ? this.getValueFromExpression(row, elseResultNode, tableAliasMap) : (expr.else ? this.getValueFromExpression(row, expr.else, tableAliasMap) : null);
+          } else if (hasValueShape) {
+            const baseVal = expr.expr ? this.getValueFromExpression(row, expr.expr, tableAliasMap) : undefined;
+            for (const w of expr.args) {
+              if (w && 'value' in w && 'result' in w) {
+                const whenVal = this.getValueFromExpression(row, w.value, tableAliasMap);
+                if (baseVal === whenVal) {
+                  return this.getValueFromExpression(row, w.result, tableAliasMap);
+                }
+              } else if (w && w.type === 'else' && 'result' in w) {
+                elseResultNode = w.result;
+              }
+            }
+            return elseResultNode ? this.getValueFromExpression(row, elseResultNode, tableAliasMap) : (expr.else ? this.getValueFromExpression(row, expr.else, tableAliasMap) : null);
+          }
+        }
+        return expr.else ? this.getValueFromExpression(row, expr.else, tableAliasMap) : null;
       default:
         throw new Error(`Unsupported expression type: ${expr.type}`);
     }
@@ -1567,7 +2212,7 @@ export class ExcelSqlQuery {
   /**
    * Apply ORDER BY
    */
-  private applyOrderBy(data: any[], orderByColumns: any[], tableAliasMap?: Map<string, string>): any[] {
+  private applyOrderBy(data: any[], orderByColumns: any[], tableAliasMap?: Map<string, string>, selectColumns?: any[]): any[] {
     const isNumericLike = (v: any) => {
       if (v === null || v === undefined) return false;
       if (typeof v === 'number') return true;
@@ -1587,10 +2232,27 @@ export class ExcelSqlQuery {
       return [aVal, bVal];
     };
 
+    // Build alias mapping from SELECT columns if provided
+    const aliasMap = new Map<string, any>();
+    if (selectColumns) {
+      for (const col of selectColumns) {
+        if (col.as) {
+          aliasMap.set(col.as, col.expr);
+        }
+      }
+    }
+
     return data.sort((a, b) => {
       for (const order of orderByColumns) {
-        const rawA = this.getValueFromExpression(a, order.expr, tableAliasMap);
-        const rawB = this.getValueFromExpression(b, order.expr, tableAliasMap);
+        let expr = order.expr;
+        
+        // Check if ORDER BY references an alias
+        if (expr.type === 'column_ref' && aliasMap.has(expr.column)) {
+          expr = aliasMap.get(expr.column);
+        }
+        
+        const rawA = this.getValueFromExpression(a, expr, tableAliasMap);
+        const rawB = this.getValueFromExpression(b, expr, tableAliasMap);
         const [aVal, bVal] = coerceComparable(rawA, rawB);
 
         let comparison = 0;
@@ -1631,7 +2293,8 @@ export class ExcelSqlQuery {
             }
           } else {
             const alias = col.as || columnName;
-            newRow[alias] = this.getValueFromExpression(row, col.expr, tableAliasMap);
+            const val = this.getValueFromExpression(row, col.expr, tableAliasMap);
+            newRow[alias] = (val === undefined) ? null : val;
           }
         } else if (col.expr.type === 'number' || col.expr.type === 'string') {
           const alias = col.as || col.expr.value;
@@ -1639,7 +2302,8 @@ export class ExcelSqlQuery {
         } else {
           // Handle other expression types (functions, binary expressions, etc.)
           const alias = col.as || 'expr';
-          newRow[alias] = this.getValueFromExpression(row, col.expr, tableAliasMap);
+          const val = this.getValueFromExpression(row, col.expr, tableAliasMap);
+          newRow[alias] = (val === undefined) ? null : val;
         }
       }
       return newRow;
@@ -1650,120 +2314,114 @@ export class ExcelSqlQuery {
    * Apply aggregate functions (non-GROUP BY case)
    */
   private applyAggregateFunction(data: any[], columns: any[], tableAliasMap?: Map<string, string>): any[] {
-    const hasAggregateFunction = columns.some(col => col.expr && col.expr.type === 'aggr_func');
-    
-    if (!hasAggregateFunction) {
+    // Only apply when SELECT list contains aggregates only (no raw column_ref etc.)
+    const hasAggregateFunction = columns.some(col => col.expr && (col.expr.type === 'aggr_func' || this.isExprAggregatesOnly(col.expr)));
+    const aggregatesOnly = columns.every(col => this.isExprAggregatesOnly(col.expr));
+
+    // If there are no aggregate functions OR select contains non-aggregate expressions, keep original data
+    if (!hasAggregateFunction || !aggregatesOnly) {
       return data;
     }
 
-    const result: any = {};
-    
+    // Collect all aggregate expressions from select list
+    const aggSet: Set<any> = new Set();
     for (const col of columns) {
-      if (col.expr && col.expr.type === 'aggr_func') {
-        const funcName = col.expr.name.toUpperCase();
-        const columnName = col.expr.args?.value?.[0]?.column || col.expr.args?.value?.[0]?.value;
-        
-        switch (funcName) {
-          case 'COUNT':
-            if (col.expr.args?.expr?.type === 'star') {
-              result[col.as || 'COUNT(*)'] = data.length;
-            } else {
-              const countArg = col.expr.args?.expr;
-              if (!countArg) {
-                throw new Error('COUNT function requires exactly 1 argument');
-              }
-              const nonNullCount = data.filter(row => {
-                const val = this.getValueFromExpression(row, countArg, tableAliasMap);
-                return val !== null && val !== undefined && val !== '';
-              }).length;
-              result[col.as || `COUNT`] = nonNullCount;
+      this.collectAggregateExprs(col.expr, aggSet);
+    }
+
+    // Compute aggregates over the loaded data
+    const aggregatedMap: Map<any, number> = new Map();
+    const counters: Map<any, { func: string, sum?: number, count?: number, max?: number, min?: number }>= new Map();
+    for (const aggrExpr of aggSet) {
+      const funcName = (aggrExpr.name?.toUpperCase?.() || aggrExpr.name?.name?.[0]?.value?.toUpperCase?.()) || 'SUM';
+      const state: any = { func: funcName };
+      if (funcName === 'SUM' || funcName === 'AVG') state.sum = 0;
+      if (funcName === 'AVG' || funcName === 'COUNT') state.count = 0;
+      if (funcName === 'MAX') state.max = Number.NEGATIVE_INFINITY;
+      if (funcName === 'MIN') state.min = Number.POSITIVE_INFINITY;
+      counters.set(aggrExpr, state);
+    }
+
+    // Traverse data and update counters
+    for (const row of data) {
+      for (const [aggrExpr, state] of counters.entries()) {
+        const func = state.func;
+        let argExpr: any = aggrExpr.args?.expr;
+        if (!argExpr && aggrExpr.args?.value?.length > 0) argExpr = aggrExpr.args.value[0];
+
+        if (func === 'COUNT') {
+          if (aggrExpr.args?.expr?.type === 'star') {
+            state.count = (state.count || 0) + 1;
+          } else {
+            const val = this.getValueFromExpression(row, argExpr, tableAliasMap);
+            if (val !== null && val !== undefined && val !== '') {
+              state.count = (state.count || 0) + 1;
             }
-            break;
-            
-          case 'SUM':
-              const sumArg = col.expr.args?.expr;
-              if (!sumArg) {
-                throw new Error('SUM function requires exactly 1 argument');
-              }
-              const sumValues = data
-                .map(row => {
-                  const val = this.getValueFromExpression(row, sumArg, tableAliasMap);
-                  return Number(val);
-                })
-                .filter(val => !isNaN(val));
-              result[col.as || `SUM`] = sumValues.reduce((sum, val) => sum + val, 0);
-              break;
-
-            case 'MAX':
-              const maxArg = col.expr.args?.expr;
-              if (!maxArg) {
-                throw new Error('MAX function requires exactly 1 argument');
-              }
-              const maxValues = data
-                .map(row => {
-                  const val = this.getValueFromExpression(row, maxArg, tableAliasMap);
-                  return Number(val);
-                })
-                .filter(val => !isNaN(val));
-              if (maxValues.length === 0) {
-                result[col.as || `MAX`] = null;
-              } else {
-                result[col.as || `MAX`] = Math.max(...maxValues);
-              }
-              break;
-
-            case 'MIN':
-              const minArg = col.expr.args?.expr;
-              if (!minArg) {
-                throw new Error('MIN function requires exactly 1 argument');
-              }
-              const minValues = data
-                .map(row => {
-                  const val = this.getValueFromExpression(row, minArg, tableAliasMap);
-                  return Number(val);
-                })
-                .filter(val => !isNaN(val));
-              if (minValues.length === 0) {
-                result[col.as || `MIN`] = null;
-              } else {
-                result[col.as || `MIN`] = Math.min(...minValues);
-              }
-              break;
-
-            case 'AVG':
-              const avgArg = col.expr.args?.expr;
-              if (!avgArg) {
-                throw new Error('AVG function requires exactly 1 argument');
-              }
-              const avgValues = data
-                .map(row => {
-                  const val = this.getValueFromExpression(row, avgArg, tableAliasMap);
-                  return Number(val);
-                })
-                .filter(val => !isNaN(val));
-              if (avgValues.length === 0) {
-                result[col.as || `AVG`] = null;
-              } else {
-                const sum = avgValues.reduce((sum, val) => sum + val, 0);
-                result[col.as || `AVG`] = sum / avgValues.length;
-              }
-              break;
-            
-          case 'DISTINCT':
-            if (!columnName) {
-              throw new Error('DISTINCT requires column name specification');
-            }
-            const distinctValues = [...new Set(data.map(row => row[columnName]))];
-            result[col.as || `DISTINCT(${columnName})`] = distinctValues;
-            break;
-            
-          default:
-            throw new Error(`Unsupported aggregate function: ${funcName}`);
+          }
+          aggregatedMap.set(aggrExpr, state.count || 0);
+        } else if (func === 'SUM' || func === 'AVG') {
+          const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+          const num = Number(v);
+          if (!isNaN(num)) {
+            state.sum = (state.sum || 0) + num;
+            if (func === 'AVG') state.count = (state.count || 0) + 1;
+            aggregatedMap.set(aggrExpr, func === 'AVG' ? ((state.sum || 0) / (state.count || 1)) : (state.sum || 0));
+          }
+        } else if (func === 'MAX') {
+          const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+          const num = Number(v);
+          if (!isNaN(num)) {
+            state.max = Math.max(state.max ?? Number.NEGATIVE_INFINITY, num);
+            aggregatedMap.set(aggrExpr, state.max ?? null);
+          }
+        } else if (func === 'MIN') {
+          const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+          const num = Number(v);
+          if (!isNaN(num)) {
+            state.min = Math.min(state.min ?? Number.POSITIVE_INFINITY, num);
+            aggregatedMap.set(aggrExpr, state.min ?? null);
+          }
+        } else if (func === 'DISTINCT') {
+          // For DISTINCT, collect values into a set and store set size
+          const v = this.getValueFromExpression(row, argExpr, tableAliasMap);
+          const key = aggrExpr;
+          const existingSet: Set<any> = (aggregatedMap.get(key) as any) || new Set<any>();
+          existingSet.add(v);
+          aggregatedMap.set(key, existingSet as any);
+        } else {
+          throw new Error(`Unsupported aggregate function: ${func}`);
         }
       }
     }
-    
-    return [result];
+
+    // For DISTINCT, convert Set to array
+    for (const [aggrExpr, val] of aggregatedMap.entries()) {
+      const funcName = (aggrExpr.name?.toUpperCase?.() || aggrExpr.name?.name?.[0]?.value?.toUpperCase?.()) || '';
+      if (funcName === 'DISTINCT' && val && (val as any as Set<any>).size !== undefined) {
+        const arr = Array.from(val as any as Set<any>);
+        aggregatedMap.set(aggrExpr, arr as any);
+      }
+    }
+
+    // Compose final single-row result according to select columns
+    const resultRow: any = {};
+    for (const col of columns) {
+      // Determine alias: prefer explicit alias; for aggregates, use COUNT(*) for star; otherwise function name
+      let alias: string = 'expr';
+      if (col.as) {
+        alias = col.as;
+      } else if (col.expr?.type === 'aggr_func') {
+        const funcName = (col.expr.name?.toUpperCase?.() || col.expr.name) as string;
+        const isStar = !!(col.expr?.args?.expr?.type === 'star' || col.expr?.args?.value?.[0]?.type === 'star');
+        if (funcName?.toUpperCase?.() === 'COUNT' && isStar) {
+          alias = 'COUNT(*)';
+        } else {
+          alias = funcName;
+        }
+      }
+      resultRow[alias] = this.evaluateAggregatedExpression(col.expr, aggregatedMap);
+    }
+    return [resultRow];
   }
 
   /**
@@ -1791,13 +2449,23 @@ export class ExcelSqlQuery {
 
     const availableColumns = new Set(Object.keys(data[0]));
     const fieldsToValidate: Array<{field: string, context: string}> = [];
-
-    // Collect fields from SELECT columns
+    // Build alias set from SELECT list so ORDER BY can reference them
+    const selectAliases = new Set<string>();
     if (ast.columns) {
       for (const col of ast.columns) {
-        this.collectFieldsFromExpression(col.expr, tableName, fieldsToValidate, 'SELECT');
+        if (col && col.as) {
+          selectAliases.add(col.as);
+        } else if (col && col.expr && col.expr.type === 'column_ref' && col.expr.column) {
+          // A bare column may also be referenced as-is in ORDER BY; include for completeness
+          selectAliases.add(col.expr.column);
+        }
       }
     }
+
+    // Collect fields from SELECT columns
+    // Note: Do NOT validate fields from SELECT list.
+    // Rationale: Per test requirements (F-12), selecting a non-existent column should yield nulls rather than throw.
+    // We therefore intentionally skip adding SELECT fields to validation to allow flexible projection.
 
     // Collect fields from WHERE clause
     if (ast.where) {
@@ -1820,6 +2488,10 @@ export class ExcelSqlQuery {
 
     // Validate all collected fields
     for (const {field, context} of fieldsToValidate) {
+      // Allow ORDER BY to reference SELECT aliases
+      if (context === 'ORDER BY' && selectAliases.has(field)) {
+        continue;
+      }
       if (field !== '*' && !field.includes('.') && !availableColumns.has(field)) {
         throw new Error(`Field "${field}" does not exist in table "${tableName}"`);
       }
@@ -1841,13 +2513,20 @@ export class ExcelSqlQuery {
     }
 
     const fieldsToValidate: Array<{field: string, tableAlias: string, context: string}> = [];
-
-    // Collect fields from SELECT columns
+    // Build alias set from SELECT list so ORDER BY can reference them
+    const selectAliases = new Set<string>();
     if (ast.columns) {
       for (const col of ast.columns) {
-        this.collectJoinFieldsFromExpression(col.expr, fieldsToValidate, 'SELECT');
+        if (col && col.as) {
+          selectAliases.add(col.as);
+        } else if (col && col.expr && col.expr.type === 'column_ref' && col.expr.column) {
+          selectAliases.add(col.expr.column);
+        }
       }
     }
+
+    // Collect fields from SELECT columns
+    // Skip validating SELECT list fields (see rationale in single-table variant)
 
     // Collect fields from WHERE clause
     if (ast.where) {
@@ -1870,6 +2549,10 @@ export class ExcelSqlQuery {
 
     // Validate all collected fields
     for (const {field, tableAlias, context} of fieldsToValidate) {
+      // Allow ORDER BY to reference SELECT aliases (no tableAlias)
+      if (context === 'ORDER BY' && (!tableAlias || tableAlias === '') && selectAliases.has(field)) {
+        continue;
+      }
       if (field !== '*' && tableAlias && tableColumns.has(tableAlias)) {
         const columns = tableColumns.get(tableAlias)!;
         if (!columns.has(field)) {

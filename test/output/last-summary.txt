@@ -1,0 +1,5 @@
+Total: 105
+Passed: 105
+Failed: 0
+Skipped: 0
+SuccessRate: 100.0%
