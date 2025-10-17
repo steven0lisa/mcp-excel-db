@@ -14,6 +14,7 @@ export class ExcelSqlQuery {
   private disableStreamingAggregate: boolean = false;
 
   constructor(options?: { disableStreamingAggregate?: boolean }) {
+    // 初始化SQL解析器
     this.parser = new NodeSqlParser();
     if (options && typeof options.disableStreamingAggregate === 'boolean') {
       this.disableStreamingAggregate = options.disableStreamingAggregate;
@@ -228,7 +229,7 @@ export class ExcelSqlQuery {
       const ext = path.extname(filePath).toLowerCase();
 
       // Parse SQL statement early so we can choose optimal execution path
-      const ast = this.parser.astify(sql);
+      const ast = this.parser.astify(sql, { database: 'MySQL' });
       // Validate SQL syntax support
       this.validateSqlSupport(ast);
 

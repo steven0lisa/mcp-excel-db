@@ -5,7 +5,7 @@
     "failedTests": 0,
     "skippedTests": 0,
     "successRate": "100.0",
-    "timestamp": "2025-10-17T08:32:44.302Z"
+    "timestamp": "2025-10-17T10:54:42.840Z"
   },
   "features": [
     {
@@ -38,7 +38,7 @@
           "rows": 10
         }
       ],
-      "duration": 39
+      "duration": 41
     },
     {
       "feature": "F-10",
@@ -95,7 +95,7 @@
           "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
         }
       ],
-      "duration": 34
+      "duration": 36
     },
     {
       "feature": "F-11",
@@ -152,7 +152,7 @@
           "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
         }
       ],
-      "duration": 22
+      "duration": 25
     },
     {
       "feature": "F-12",
@@ -199,7 +199,7 @@
           "rows": 1
         }
       ],
-      "duration": 15
+      "duration": 16
     },
     {
       "feature": "F-14",
@@ -209,7 +209,7 @@
           "test": "Large file processing",
           "status": "PASS",
           "worksheets": 1,
-          "duration": 923
+          "duration": 1012
         },
         {
           "test": "Memory optimization validation",
@@ -217,7 +217,7 @@
           "note": "Code includes file size checks and optimized loading"
         }
       ],
-      "duration": 3631
+      "duration": 3750
     },
     {
       "feature": "F-15",
@@ -264,7 +264,7 @@
           "details": "空文件处理成功，工作表数: 1, 列数: 3"
         }
       ],
-      "duration": 53
+      "duration": 55
     },
     {
       "feature": "F-16",
@@ -308,7 +308,7 @@
         {
           "test": "Large file column info performance",
           "status": "PASS",
-          "details": "大文件列信息获取耗时: 17ms, 列数: 50"
+          "details": "大文件列信息获取耗时: 16ms, 列数: 50"
         },
         {
           "test": "Multi-sheet column info retrieval",
@@ -321,7 +321,7 @@
           "details": "所有列名查询一致性验证通过"
         }
       ],
-      "duration": 80
+      "duration": 83
     },
     {
       "feature": "F-17",
@@ -445,7 +445,7 @@
           "details": "3/3 个性能查询在合理时间内完成"
         }
       ],
-      "duration": 118
+      "duration": 124
     },
     {
       "feature": "F-2",
@@ -481,7 +481,7 @@
           "rows": 10
         }
       ],
-      "duration": 12
+      "duration": 14
     },
     {
       "feature": "F-3",
@@ -522,7 +522,7 @@
           "status": "PASS"
         }
       ],
-      "duration": 13
+      "duration": 16
     },
     {
       "feature": "F-4",
@@ -606,7 +606,7 @@
           "rows": 5
         }
       ],
-      "duration": 16
+      "duration": 17
     },
     {
       "feature": "F-6",
@@ -658,7 +658,7 @@
           "rows": 1
         }
       ],
-      "duration": 15
+      "duration": 16
     },
     {
       "feature": "F-7",
@@ -710,7 +710,7 @@
           "rows": 10
         }
       ],
-      "duration": 17
+      "duration": 16
     },
     {
       "feature": "F-8",
@@ -772,7 +772,7 @@
           "rows": 3
         }
       ],
-      "duration": 21
+      "duration": 20
     },
     {
       "feature": "F-9",
