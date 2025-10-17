@@ -11,7 +11,7 @@
 
 [![npm version](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db.svg)](https://badge.fury.io/js/%40zhangzichao2008%2Fmcp-excel-db)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/Tests-18%2F113%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
+[![Tests](https://img.shields.io/badge/Tests-18%2F148%20failed-red?style=flat-square&logo=jest)](https://github.com/steven0lisa/mcp-excel-db/actions)
 [![Coverage](https://img.shields.io/badge/Coverage-21.58%25-red?style=flat-square&logo=codecov)](https://github.com/steven0lisa/mcp-excel-db/actions)
 
 
@@ -383,6 +383,12 @@ npm run test:features
 ```
 
 The feature tests validate all implemented SQL features including WHERE conditions, JOIN operations, string functions, math functions, and more. Each feature has its own test suite in the `test/test-case/` directory.
+
+**Latest Test Features (F-15 to F-18):**
+- **F-15**: Worksheet Naming and Column Information Consistency Test - Validates worksheet name handling and column information retrieval
+- **F-16**: Column Information Retrieval and Case Sensitivity Test - Tests column name case preservation and special character support
+- **F-17**: Error Handling and Message Consistency Test - Comprehensive error handling validation with user-friendly messages
+- **F-18**: SQL Syntax Compatibility and Data Type Inference Test - SQL syntax compatibility and automatic data type inference
 
 ### Development Mode
 

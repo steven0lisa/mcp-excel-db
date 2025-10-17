@@ -144,3 +144,4 @@ vite.config.ts.timestamp-*
 
 
 test/bigexcel.xlsx
+test/output

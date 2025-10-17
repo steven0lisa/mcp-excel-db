@@ -1,11 +1,11 @@
 {
   "meta": {
-    "totalTests": 105,
-    "passedTests": 105,
+    "totalTests": 140,
+    "passedTests": 140,
     "failedTests": 0,
     "skippedTests": 0,
     "successRate": "100.0",
-    "timestamp": "2025-10-17T07:23:45.651Z"
+    "timestamp": "2025-10-17T08:32:44.302Z"
   },
   "features": [
     {
@@ -38,7 +38,7 @@
           "rows": 10
         }
       ],
-      "duration": 41
+      "duration": 39
     },
     {
       "feature": "F-10",
@@ -95,7 +95,7 @@
           "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
         }
       ],
-      "duration": 48
+      "duration": 34
     },
     {
       "feature": "F-11",
@@ -152,7 +152,7 @@
           "error": "SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
         }
       ],
-      "duration": 28
+      "duration": 22
     },
     {
       "feature": "F-12",
@@ -199,7 +199,7 @@
           "rows": 1
         }
       ],
-      "duration": 18
+      "duration": 15
     },
     {
       "feature": "F-14",
@@ -209,7 +209,7 @@
           "test": "Large file processing",
           "status": "PASS",
           "worksheets": 1,
-          "duration": 1818
+          "duration": 923
         },
         {
           "test": "Memory optimization validation",
@@ -217,49 +217,235 @@
           "note": "Code includes file size checks and optimized loading"
         }
       ],
-      "duration": 6284
+      "duration": 3631
     },
     {
       "feature": "F-15",
       "file": "tc-f-15.js",
       "results": [
         {
-          "test": "Generate synthetic CSV",
+          "test": "Single sheet naming consistency",
           "status": "PASS",
-          "rows": 200000,
-          "file": "/Users/steven0lisa/work/personal/mcp-excel-db/test/tmp_streaming_perf.csv"
+          "details": "工作表名称 \"Sheet1\" 查询成功"
         },
         {
-          "test": "Streaming aggregation execution",
+          "test": "Column info reliability",
           "status": "PASS",
-          "duration_ms": 280,
-          "output_sample": {
-            "weighted_sum": 112344042.5,
-            "total_weight": 149995,
-            "weighted_average": 748.985249508317
-          }
+          "details": "列名 \"Name, Age, City\" 查询成功"
         },
         {
-          "test": "Baseline aggregation execution",
+          "test": "Multi-sheet naming consistency",
           "status": "PASS",
-          "duration_ms": 291,
-          "output_sample": {
-            "weighted_sum": 112344042.5,
-            "total_weight": 149995,
-            "weighted_average": 748.985249508317
-          }
+          "details": "3 个工作表命名一致性测试"
         },
         {
-          "test": "Correctness: streaming vs baseline results equal",
-          "status": "PASS"
+          "test": "Special character worksheet names",
+          "status": "PASS",
+          "details": "特殊字符工作表 \"数据表-2024\" 处理成功"
         },
         {
-          "test": "Performance: streaming vs baseline time",
+          "test": "Error handling consistency",
           "status": "PASS",
-          "note": "Baseline 291ms vs Streaming 280ms (x1.04)"
+          "details": "错误消息: SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
+        },
+        {
+          "test": "CSV worksheet naming consistency",
+          "status": "PASS",
+          "details": "CSV 工作表名称 \"Sheet\" 查询成功"
+        },
+        {
+          "test": "Column case sensitivity",
+          "status": "PASS",
+          "details": "列名大小写处理正确，实际列名: PAT_Type, GeoSize, CAI, DataValue"
+        },
+        {
+          "test": "Empty file handling",
+          "status": "PASS",
+          "details": "空文件处理成功，工作表数: 1, 列数: 3"
         }
       ],
-      "duration": 678
+      "duration": 53
+    },
+    {
+      "feature": "F-16",
+      "file": "tc-f-16.js",
+      "results": [
+        {
+          "test": "Basic column info retrieval",
+          "status": "PASS",
+          "details": "期望列: Name, Age, City, Salary, 实际列: Name, Age, City, Salary"
+        },
+        {
+          "test": "Mixed case column handling",
+          "status": "PASS",
+          "details": "期望列: PAT_Type, GeoSize, CAI, DataValue, user_ID, Email_Address, 实际列: PAT_Type, GeoSize, CAI, DataValue, user_ID, Email_Address"
+        },
+        {
+          "test": "Query with actual column names",
+          "status": "PASS",
+          "details": "使用列名 \"PAT_Type\" 查询成功"
+        },
+        {
+          "test": "Special character column names",
+          "status": "PASS",
+          "details": "期望包含特殊字符列，实际列: 姓名, 年龄, Email@Address, Phone#Number, Data-Value, User ID"
+        },
+        {
+          "test": "Special character column query",
+          "status": "PASS",
+          "details": "特殊字符列名 \"姓名\" 查询成功"
+        },
+        {
+          "test": "Empty column name handling",
+          "status": "PASS",
+          "details": "空列名处理，生成列名: Name, Column2, Age, Column4, City"
+        },
+        {
+          "test": "CSV column info retrieval",
+          "status": "PASS",
+          "details": "CSV列名: Product, Price, Category, InStock"
+        },
+        {
+          "test": "Large file column info performance",
+          "status": "PASS",
+          "details": "大文件列信息获取耗时: 17ms, 列数: 50"
+        },
+        {
+          "test": "Multi-sheet column info retrieval",
+          "status": "PASS",
+          "details": "3 个工作表，列信息获取状态: Users(3列), Products(4列), Orders(5列)"
+        },
+        {
+          "test": "Column name query consistency",
+          "status": "PASS",
+          "details": "所有列名查询一致性验证通过"
+        }
+      ],
+      "duration": 80
+    },
+    {
+      "feature": "F-17",
+      "file": "tc-f-17.js",
+      "results": [
+        {
+          "test": "File not found error handling",
+          "status": "PASS",
+          "details": "错误消息: Failed to get worksheet information: ENOENT: no such file or directory, stat '/path/to/nonexistent/file.xlsx'"
+        },
+        {
+          "test": "Worksheet not found error handling",
+          "status": "PASS",
+          "details": "错误消息: SQL query execution failed: Worksheet \"NonExistentSheet\" does not exist"
+        },
+        {
+          "test": "Column not found error handling",
+          "status": "PASS",
+          "details": "错误消息: SQL query execution failed: Field \"NonExistentColumn\" does not exist in table \"Sheet1\""
+        },
+        {
+          "test": "SQL syntax error handling",
+          "status": "PASS",
+          "details": "错误消息: SQL query execution failed: Expected \"#\", \"--\", \"/*\", \":=\", \"=\", or [ \\t\\n\\r] but \"S\" found."
+        },
+        {
+          "test": "Corrupted file error handling",
+          "status": "PASS",
+          "details": "错误消息: Failed to get worksheet information: Can't find end of central directory : is this a zip file ? If it is, see https://stuk.github.io/jszip/documentation/howto/read_zip.html"
+        },
+        {
+          "test": "Empty file error handling",
+          "status": "PASS",
+          "details": "空文件查询处理正常"
+        },
+        {
+          "test": "Permission error handling",
+          "status": "PASS",
+          "details": "错误消息: Failed to get worksheet information: EACCES: permission denied, open '/Users/steven0lisa/work/personal/mcp-excel-db/test/test-data-restricted.xlsx'"
+        },
+        {
+          "test": "Error message user-friendliness",
+          "status": "PASS",
+          "details": "3/3 个错误消息用户友好"
+        },
+        {
+          "test": "Error recovery and state consistency",
+          "status": "PASS",
+          "details": "错误后状态恢复正常，后续查询成功"
+        },
+        {
+          "test": "Concurrent error handling",
+          "status": "PASS",
+          "details": "并发测试: 2 个错误, 1 个成功"
+        }
+      ],
+      "duration": 21
+    },
+    {
+      "feature": "F-18",
+      "file": "tc-f-18.js",
+      "results": [
+        {
+          "test": "Basic SQL syntax compatibility",
+          "status": "PASS",
+          "details": "7/7 个基本SQL查询成功"
+        },
+        {
+          "test": "Identifier quoting rules",
+          "status": "PASS",
+          "details": "4/5 个标识符查询成功"
+        },
+        {
+          "test": "Number type inference",
+          "status": "PASS",
+          "details": "数字类型推断正确"
+        },
+        {
+          "test": "Date type inference",
+          "status": "PASS",
+          "details": "日期类型推断正确"
+        },
+        {
+          "test": "Boolean type inference",
+          "status": "PASS",
+          "details": "布尔类型推断正确"
+        },
+        {
+          "test": "NULL and empty value handling",
+          "status": "PASS",
+          "details": "NULL值处理测试完成，包含空值: true"
+        },
+        {
+          "test": "Complex SQL syntax support",
+          "status": "PASS",
+          "details": "2/4 个复杂SQL查询成功"
+        },
+        {
+          "test": "Case insensitive SQL keywords",
+          "status": "PASS",
+          "details": "4/4 个大小写不敏感查询成功"
+        },
+        {
+          "test": "Unicode and special character support",
+          "status": "PASS",
+          "details": "4/4 个Unicode查询成功"
+        },
+        {
+          "test": "Data type conversion and comparison",
+          "status": "PASS",
+          "details": "5/6 个类型转换查询成功"
+        },
+        {
+          "test": "SQL injection protection",
+          "status": "PASS",
+          "details": "3/3 个SQL注入尝试被防护"
+        },
+        {
+          "test": "SQL query performance",
+          "status": "PASS",
+          "details": "3/3 个性能查询在合理时间内完成"
+        }
+      ],
+      "duration": 118
     },
     {
       "feature": "F-2",
@@ -295,7 +481,7 @@
           "rows": 10
         }
       ],
-      "duration": 20
+      "duration": 12
     },
     {
       "feature": "F-3",
@@ -336,7 +522,7 @@
           "status": "PASS"
         }
       ],
-      "duration": 17
+      "duration": 13
     },
     {
       "feature": "F-4",
@@ -368,7 +554,7 @@
           "rows": 0
         }
       ],
-      "duration": 13
+      "duration": 11
     },
     {
       "feature": "F-5",
@@ -420,7 +606,7 @@
           "rows": 5
         }
       ],
-      "duration": 21
+      "duration": 16
     },
     {
       "feature": "F-6",
@@ -472,7 +658,7 @@
           "rows": 1
         }
       ],
-      "duration": 20
+      "duration": 15
     },
     {
       "feature": "F-7",
@@ -524,7 +710,7 @@
           "rows": 10
         }
       ],
-      "duration": 22
+      "duration": 17
     },
     {
       "feature": "F-8",
@@ -586,7 +772,7 @@
           "rows": 3
         }
       ],
-      "duration": 26
+      "duration": 21
     },
     {
       "feature": "F-9",
@@ -643,7 +829,7 @@
           "note": "lowercase: 0, uppercase: 0"
         }
       ],
-      "duration": 19
+      "duration": 16
     }
   ]
 }
